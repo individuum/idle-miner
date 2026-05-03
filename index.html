@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Idle Miner</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="game">
+  <header class="hud">
+    <div class="money">$<span id="money">0</span></div>
+    <div class="rate"><span id="rate">0</span>/s</div>
+    <button id="reset" class="reset-btn" title="Reset save">Reset</button>
+  </header>
+
+  <div class="scene">
+    <div class="surface">
+      <div class="dropoff" id="dropoff">
+        <div class="label">Surface</div>
+        <div class="ore-count" id="dropoff-count">0</div>
+      </div>
+      <div class="walkway">
+        <div class="worker" id="worker">
+          <div class="worker-body" id="worker-body"></div>
+          <div class="worker-cargo" id="worker-cargo">0</div>
+        </div>
+      </div>
+      <div class="processor" id="processor">
+        <div class="proc-icon">⚙</div>
+        <div class="label">Processor</div>
+        <div class="proc-bar"><div class="proc-bar-fill" id="proc-bar"></div></div>
+        <div class="proc-buffer" id="proc-buffer">0</div>
+      </div>
+    </div>
+
+    <div class="underground">
+      <div class="elevator-shaft">
+        <div class="elevator" id="elevator">
+          <div class="elev-fill" id="elev-fill"></div>
+          <div class="elev-cargo" id="elev-cargo">0/0</div>
+        </div>
+      </div>
+      <div class="shafts" id="shafts"></div>
+    </div>
+  </div>
+
+  <div class="upgrades" id="upgrades"></div>
+  <div class="fx-layer" id="fx"></div>
+</div>
+
+<div id="offline-modal" class="modal hidden">
+  <div class="modal-content">
+    <h2>Welcome back!</h2>
+    <p>While you were away (<span id="offline-time"></span>), your mine earned:</p>
+    <div class="offline-earned">$<span id="offline-money">0</span></div>
+    <button id="offline-close">Collect</button>
+  </div>
+</div>
+
+<script src="game.js?v=7"></script>
+</body>
+</html>
