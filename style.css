@@ -1,5 +1,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; }
+
 :root {
   --bg: #1a1612;
   --dirt: #3d2f24;
@@ -723,3 +725,159 @@ body {
   margin-top: 8px;
 }
 .modal-content button:hover { background: #f08a4d; }
+
+/* ---------- MOBILE (<= 600px) ---------- */
+/* Compress horizontal layout. Row heights stay at 100px so the elevator
+   y-position math in game.js still works — only widths and surface elements
+   reflow. Elevator + dropoff move to the left edge so shafts get more room. */
+@media (max-width: 600px) {
+  body { font-size: 14px; }
+  .game {
+    padding: 8px;
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  /* HUD */
+  .hud { padding: 10px 14px; gap: 14px; margin-bottom: 8px; flex-wrap: wrap; }
+  .money { font-size: 22px; }
+  .rate { font-size: 12px; }
+  .reset-btn { font-size: 11px; padding: 5px 10px; }
+
+  /* Surface — dropoff and processor moved to opposite edges */
+  .surface { height: 100px; padding-bottom: 8px; }
+  .dropoff {
+    left: 8px;
+    transform: none;
+    width: 64px;
+  }
+  .dropoff .label { font-size: 10px; }
+  .ore-count { font-size: 12px; min-width: 36px; padding: 1px 4px; }
+  .walkway {
+    left: 80px;
+    right: 96px;
+    height: 42px;
+  }
+  .processor {
+    width: 86px;
+    right: 6px;
+    padding: 4px 2px;
+  }
+  .proc-icon { font-size: 24px; }
+  .processor .label { font-size: 10px; margin: 1px 0; }
+  .proc-buffer { font-size: 10px; }
+
+  /* Underground — elevator moved to left edge to free shaft width */
+  .elevator-shaft { left: 14px; width: 38px; }
+  .elevator { height: 32px; }
+  .elev-cargo { font-size: 9px; min-width: 18px; padding: 1px 3px; }
+
+  .shafts { padding-top: 30px; }
+
+  /* Shafts/barriers — full width to the right of the elevator */
+  .shaft-tunnel,
+  .barrier-tunnel {
+    left: 56px;
+    right: 8px;
+    height: 64px;
+    top: 18px;
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  /* Label as small chip above the tunnel */
+  .shaft-label {
+    left: 56px;
+    top: 0;
+    width: auto;
+    text-align: left;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.75;
+    color: var(--gold);
+    padding-left: 2px;
+  }
+
+  /* Miners — smaller SVGs */
+  .miners { height: 50px; gap: 2px; }
+  .miner-slot .char-miner { width: 24px; height: 30px; }
+  .miner-extra { font-size: 12px; }
+
+  /* Worker / hauler */
+  .worker { width: 36px; }
+  .worker-body { height: 40px; }
+  .worker-body .char-hauler { width: 32px; height: 38px; }
+  .worker-cargo { font-size: 9px; padding: 1px 3px; min-width: 16px; }
+
+  /* Barrier */
+  .barrier-icon { font-size: 24px; }
+  .barrier-name { font-size: 12px; }
+  .barrier-desc { font-size: 10px; }
+  .barrier-action { padding: 5px 9px; font-size: 11px; }
+
+  /* Mine progress bar — drop the max-width cap so it fills the shaft */
+  .mine-progress { max-width: none; }
+
+  /* Ore pile chip */
+  .ore-pile { font-size: 11px; min-width: 44px; padding: 2px 6px; }
+
+  /* Upgrades — narrower cards, denser grid */
+  .upgrades { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin-top: 8px; }
+  .upgrade { padding: 8px 10px; }
+  .upgrade-name { font-size: 12px; margin-bottom: 3px; }
+  .upgrade-effect { font-size: 10px; margin-bottom: 4px; }
+  .upgrade-cost { font-size: 12px; }
+
+  /* Section title */
+  .section-title { font-size: 11px; letter-spacing: 1.5px; }
+
+  /* Modal scales to viewport */
+  .modal-content {
+    padding: 18px 20px;
+    max-width: calc(100vw - 32px);
+    margin: 0 16px;
+  }
+  .modal-content h2 { font-size: 18px; }
+  .offline-earned { font-size: 22px; margin: 10px 0; }
+  .modal-content button { padding: 9px 22px; font-size: 13px; }
+
+  /* FX scale down so they don't dominate a small viewport */
+  .fx-pow { font-size: 22px; }
+  .fx-money { font-size: 14px; }
+
+  /* Tap feedback (replaces hover-only states for touch) */
+  .shaft.manual:not(.locked):active .shaft-tunnel,
+  .elevator.manual:active,
+  .worker.manual:active,
+  .processor.manual:active,
+  .upgrade:active:not(.disabled) { filter: brightness(1.2); }
+}
+
+/* Very small phones */
+@media (max-width: 360px) {
+  .money { font-size: 18px; }
+  .processor { width: 76px; }
+  .walkway { right: 86px; }
+  .upgrades { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); }
+  .upgrade-name { font-size: 11px; }
+}
+
+/* Landscape phone — keep things compact vertically */
+@media (max-height: 500px) and (orientation: landscape) {
+  .surface { height: 90px; }
+  .hud { padding: 6px 12px; margin-bottom: 6px; }
+  .money { font-size: 18px; }
+}
+
+/* Hover effects only on devices that actually have hover */
+@media (hover: none) {
+  .upgrade:hover:not(.disabled) { background: var(--panel); border-color: var(--panel-light); }
+  .shaft.manual:not(.locked):hover .shaft-tunnel,
+  .elevator.manual:hover,
+  .worker.manual:hover,
+  .processor.manual:hover,
+  .barrier-tunnel:hover,
+  .locked-overlay:hover { filter: none; background: inherit; }
+}
