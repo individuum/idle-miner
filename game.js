@@ -246,17 +246,17 @@ const COSTS = {
   shaftMine:    (z, k) => 8   * Math.pow(8, shaftTier(z, k)) * Math.pow(1.15, state.zones[z].shafts[k].mineLevel - 1),
   shaftCap:     (z, k) => 20  * Math.pow(8, shaftTier(z, k)) * Math.pow(1.20, state.zones[z].shafts[k].capLevel - 1),
   shaftMiner:   (z, k) => 40  * Math.pow(8, shaftTier(z, k)) * Math.pow(1.40, state.zones[z].shafts[k].minerLevel - 1),
-  shaftForeman: (z, k) => 75  * Math.pow(40, shaftTier(z, k)),
+  shaftForeman: (z, k) => 20  * Math.pow(40, shaftTier(z, k)),
   elevSpeed:    (z) => 30  * zoneCostScale(z) * Math.pow(1.18, state.zones[z].elevator.speedLevel - 1),
   elevCap:      (z) => 50  * zoneCostScale(z) * Math.pow(1.22, state.zones[z].elevator.capLevel - 1),
-  elevAuto:     (z) => 175 * zoneCostScale(z),
+  elevAuto:     (z) => 60  * zoneCostScale(z),
   workerSpeed:  (z) => 20  * zoneCostScale(z) * Math.pow(1.15, state.zones[z].worker.speedLevel - 1),
   workerCap:    (z) => 40  * zoneCostScale(z) * Math.pow(1.22, state.zones[z].worker.capLevel - 1),
-  workerAuto:   (z) => 100 * zoneCostScale(z),
+  workerAuto:   (z) => 30  * zoneCostScale(z),
   procSpeed:    (z) => 60  * zoneCostScale(z) * Math.pow(1.20, state.zones[z].processor.speedLevel - 1),
   procValue:    (z) => 120 * zoneCostScale(z) * Math.pow(1.30, state.zones[z].processor.valueLevel - 1),
   procParallel: (z) => 800 * zoneCostScale(z) * Math.pow(2.0, state.zones[z].processor.parallelLevel - 1),
-  procAuto:     (z) => 600 * zoneCostScale(z),
+  procAuto:     (z) => 150 * zoneCostScale(z),
 };
 
 // ---------- NUMBER FORMAT ----------
