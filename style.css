@@ -32,6 +32,53 @@ body {
   position: relative;
 }
 
+/* ---------- ZONE THEMES ---------- */
+/* Each zone exposes --tunnel-bg / --tunnel-border / --pile-bg / --pile-color
+   so .shaft-tunnel, .barrier-tunnel and .ore-pile pick them up via var()
+   fallbacks. Falls back to the surface look when no zone is set. */
+[data-zone="surface"] {
+  --tunnel-bg: linear-gradient(180deg, #5a4636, #2a2520);
+  --tunnel-border: #1a1410;
+  --pile-bg: #2a2520;
+  --pile-color: #f5c542;
+  --pile-border: #8b7355;
+}
+[data-zone="deep"] {
+  --tunnel-bg: linear-gradient(180deg, #3a5a45, #15281c);
+  --tunnel-border: #0c1a10;
+  --pile-bg: #15281c;
+  --pile-color: #8be0a0;
+  --pile-border: #4a8a60;
+}
+[data-zone="forge"] {
+  --tunnel-bg: linear-gradient(180deg, #6a3520, #3a1010);
+  --tunnel-border: #2a0808;
+  --pile-bg: #3a1010;
+  --pile-color: #ff8060;
+  --pile-border: #9a4030;
+}
+[data-zone="magma"] {
+  --tunnel-bg: linear-gradient(180deg, #a04018, #5a1000);
+  --tunnel-border: #3a0a00;
+  --pile-bg: #5a1000;
+  --pile-color: #ffb060;
+  --pile-border: #c05030;
+}
+[data-zone="ice"] {
+  --tunnel-bg: linear-gradient(180deg, #4a7aa0, #1a3a5a);
+  --tunnel-border: #0a1a3a;
+  --pile-bg: #1a3a5a;
+  --pile-color: #a0d8ff;
+  --pile-border: #5a8ab0;
+}
+[data-zone="cosmic"] {
+  --tunnel-bg: linear-gradient(180deg, #5a2a8a, #2a0a5a);
+  --tunnel-border: #1a0a3a;
+  --pile-bg: #2a0a5a;
+  --pile-color: #d0a0ff;
+  --pile-border: #6a4a9a;
+}
+
 /* ---------- COMIC FX OVERLAY ---------- */
 .fx-layer {
   position: absolute;
@@ -255,8 +302,8 @@ body {
   top: 18px;
   background:
     repeating-linear-gradient(45deg, rgba(0,0,0,0.25) 0 6px, rgba(0,0,0,0) 6px 12px),
-    linear-gradient(180deg, #6a4838, #3a2010);
-  border: 2px solid #1a0e08;
+    var(--tunnel-bg, linear-gradient(180deg, #6a4838, #3a2010));
+  border: 2px solid var(--tunnel-border, #1a0e08);
   border-left: none;
   border-radius: 0 6px 6px 0;
   display: flex;
@@ -568,8 +615,8 @@ body {
   right: 12px;
   height: 64px;
   top: 18px;
-  background: linear-gradient(180deg, var(--dirt-light), var(--rock));
-  border: 2px solid #1a1410;
+  background: var(--tunnel-bg, linear-gradient(180deg, var(--dirt-light), var(--rock)));
+  border: 2px solid var(--tunnel-border, #1a1410);
   border-left: none;
   border-radius: 0 6px 6px 0;
   display: flex;
@@ -594,13 +641,13 @@ body {
 }
 
 .ore-pile {
-  background: var(--rock);
-  color: var(--gold);
+  background: var(--pile-bg, var(--rock));
+  color: var(--pile-color, var(--gold));
   padding: 2px 8px;
   border-radius: 4px;
   font-weight: bold;
   font-size: 13px;
-  border: 1px solid var(--ore);
+  border: 1px solid var(--pile-border, var(--ore));
   min-width: 50px;
   text-align: center;
 }

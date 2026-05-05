@@ -3,26 +3,64 @@
 const SAVE_KEY = 'idleminer_save_v4';
 const OFFLINE_CAP_SEC = 4 * 60 * 60;
 
-// ---------- SHAFT CATALOG ----------
-const SHAFT_DEFS = [
-  { name: 'Surface Quarry',   unlockCost: 0,        baseTime: 3.0,  baseCap: 10,  baseOre: 2 },
-  { name: 'Copper Vein',      unlockCost: 250,      baseTime: 4.0,  baseCap: 14,  baseOre: 4 },
-  { name: 'Silver Tunnel',    unlockCost: 1.0e4,    baseTime: 5.0,  baseCap: 20,  baseOre: 8 },
-  { name: 'Gold Cavern',      unlockCost: 5.0e5,    baseTime: 6.0,  baseCap: 28,  baseOre: 16 },
-  { name: 'Platinum Depths',  unlockCost: 2.5e7,    baseTime: 7.0,  baseCap: 40,  baseOre: 32 },
-  { name: 'Diamond Mine',     unlockCost: 1.25e9,   baseTime: 9.0,  baseCap: 55,  baseOre: 64 },
-  { name: 'Mithril Shaft',    unlockCost: 6.0e10,   baseTime: 11.0, baseCap: 75,  baseOre: 128 },
-  { name: 'Adamantite Core',  unlockCost: 3.0e12,   baseTime: 13.0, baseCap: 100, baseOre: 256 },
-  { name: 'Obsidian Forge',   unlockCost: 1.5e14,   baseTime: 15.0, baseCap: 140, baseOre: 512 },
-  { name: 'Cobalt Reactor',   baseTime: 17.0, baseCap: 180, baseOre: 1024, unlockCost: 7.5e15 },
-  { name: 'Antimatter Layer', baseTime: 19.0, baseCap: 220, baseOre: 2048, unlockCost: 4.0e17 },
-  { name: 'Quantum Core',     baseTime: 21.0, baseCap: 280, baseOre: 4096, unlockCost: 2.0e19 },
+// ---------- ZONES ----------
+// Each zone is a contiguous run of shafts that share a visual theme. The
+// barrier between zones (in BARRIER_DEFS) gates progression into the next.
+const ZONE_DEFS = [
+  { id: 'surface',  name: 'Surface Mine',    firstShaft: 0,  lastShaft: 3  },
+  { id: 'deep',     name: 'Deep Earth',      firstShaft: 4,  lastShaft: 7  },
+  { id: 'forge',    name: 'Hellforge',       firstShaft: 8,  lastShaft: 11 },
+  { id: 'magma',    name: 'Magma Layer',     firstShaft: 12, lastShaft: 15 },
+  { id: 'ice',      name: 'Glacial Reach',   firstShaft: 16, lastShaft: 19 },
+  { id: 'cosmic',   name: 'Cosmic Verge',    firstShaft: 20, lastShaft: 23 },
 ];
 
-// Debris barriers between shaft groups. afterShaft is 0-indexed.
+function zoneOfShaft(i) {
+  for (const z of ZONE_DEFS) if (i >= z.firstShaft && i <= z.lastShaft) return z;
+  return ZONE_DEFS[ZONE_DEFS.length - 1];
+}
+
+// ---------- SHAFT CATALOG ----------
+const SHAFT_DEFS = [
+  // Zone: Surface Mine
+  { name: 'Surface Quarry',     unlockCost: 0,        baseTime: 3.0,  baseCap: 10,    baseOre: 2 },
+  { name: 'Copper Vein',        unlockCost: 250,      baseTime: 4.0,  baseCap: 14,    baseOre: 4 },
+  { name: 'Silver Tunnel',      unlockCost: 1.0e4,    baseTime: 5.0,  baseCap: 20,    baseOre: 8 },
+  { name: 'Gold Cavern',        unlockCost: 5.0e5,    baseTime: 6.0,  baseCap: 28,    baseOre: 16 },
+  // Zone: Deep Earth
+  { name: 'Platinum Depths',    unlockCost: 2.5e7,    baseTime: 7.0,  baseCap: 40,    baseOre: 32 },
+  { name: 'Diamond Mine',       unlockCost: 1.25e9,   baseTime: 9.0,  baseCap: 55,    baseOre: 64 },
+  { name: 'Mithril Shaft',      unlockCost: 6.0e10,   baseTime: 11.0, baseCap: 75,    baseOre: 128 },
+  { name: 'Adamantite Core',    unlockCost: 3.0e12,   baseTime: 13.0, baseCap: 100,   baseOre: 256 },
+  // Zone: Hellforge
+  { name: 'Obsidian Forge',     unlockCost: 1.5e14,   baseTime: 15.0, baseCap: 140,   baseOre: 512 },
+  { name: 'Cobalt Reactor',     unlockCost: 7.5e15,   baseTime: 17.0, baseCap: 180,   baseOre: 1024 },
+  { name: 'Antimatter Layer',   unlockCost: 4.0e17,   baseTime: 19.0, baseCap: 220,   baseOre: 2048 },
+  { name: 'Quantum Core',       unlockCost: 2.0e19,   baseTime: 21.0, baseCap: 280,   baseOre: 4096 },
+  // Zone: Magma Layer
+  { name: 'Magma Vein',         unlockCost: 1.0e21,   baseTime: 23.0, baseCap: 360,   baseOre: 8192 },
+  { name: 'Sulphur Pit',        unlockCost: 5.0e22,   baseTime: 25.0, baseCap: 460,   baseOre: 16384 },
+  { name: 'Molten Forge',       unlockCost: 2.0e24,   baseTime: 27.0, baseCap: 580,   baseOre: 32768 },
+  { name: 'Lava Heart',         unlockCost: 1.0e26,   baseTime: 29.0, baseCap: 720,   baseOre: 65536 },
+  // Zone: Glacial Reach
+  { name: 'Ice Cavern',         unlockCost: 5.0e27,   baseTime: 31.0, baseCap: 880,   baseOre: 131072 },
+  { name: 'Frostbite Hollow',   unlockCost: 2.0e29,   baseTime: 33.0, baseCap: 1080,  baseOre: 262144 },
+  { name: 'Crystalline Lattice',unlockCost: 1.0e31,   baseTime: 35.0, baseCap: 1300,  baseOre: 524288 },
+  { name: 'Glacial Vault',      unlockCost: 5.0e32,   baseTime: 37.0, baseCap: 1560,  baseOre: 1048576 },
+  // Zone: Cosmic Verge
+  { name: 'Stardust Layer',     unlockCost: 2.0e34,   baseTime: 39.0, baseCap: 1860,  baseOre: 2097152 },
+  { name: 'Nebula Cradle',      unlockCost: 1.0e36,   baseTime: 41.0, baseCap: 2200,  baseOre: 4194304 },
+  { name: 'Void Crystal Mantle',unlockCost: 5.0e37,   baseTime: 43.0, baseCap: 2600,  baseOre: 8388608 },
+  { name: 'Singularity',        unlockCost: 2.0e39,   baseTime: 45.0, baseCap: 3100,  baseOre: 16777216 },
+];
+
+// Debris barriers between zone boundaries. afterShaft is 0-indexed.
 const BARRIER_DEFS = [
-  { afterShaft: 3, name: 'Fossilized Wall',  cost: 5.0e6,  icon: '🦴', desc: 'Ancient bones and rock blocking the descent' },
-  { afterShaft: 7, name: 'Volcanic Debris',  cost: 2.0e13, icon: '🌋', desc: 'Hardened lava and pumice choking the shaft' },
+  { afterShaft: 3,  name: 'Fossilized Wall', cost: 5.0e6,  icon: '🦴', desc: 'Ancient bones and rock blocking the descent' },
+  { afterShaft: 7,  name: 'Volcanic Debris', cost: 2.0e13, icon: '🌋', desc: 'Hardened lava and pumice choking the shaft' },
+  { afterShaft: 11, name: 'Tectonic Fault',  cost: 5.0e20, icon: '🔥', desc: 'Cracked stone seals the magma layer below' },
+  { afterShaft: 15, name: 'Glacial Wall',    cost: 1.0e26, icon: '❄',  desc: 'A frozen tomb bars the ice depths' },
+  { afterShaft: 19, name: 'Reality Tear',    cost: 5.0e33, icon: '✦',  desc: 'Spacetime frays here — only relentless wealth can mend it' },
 ];
 
 // ---------- STATE ----------
@@ -472,6 +510,7 @@ function buildShafts() {
       const el = document.createElement('div');
       el.className = 'shaft' + (s.unlocked ? '' : ' locked');
       el.dataset.shaft = i;
+      el.dataset.zone = zoneOfShaft(i).id;
       el.innerHTML = `
         <div class="shaft-tunnel">
           <div class="miners"></div>
@@ -502,6 +541,8 @@ function buildShafts() {
       const el = document.createElement('div');
       el.className = 'barrier';
       el.dataset.barrier = bi;
+      // Theme the barrier as the zone it unlocks (the zone of the next shaft)
+      el.dataset.zone = zoneOfShaft(def.afterShaft + 1).id;
       el.innerHTML = `
         <div class="barrier-tunnel">
           <div class="barrier-icon">${def.icon}</div>
