@@ -942,21 +942,21 @@ function getUpgradeDefs() {
     const sdef = SHAFT_DEFS[gIdx(z, k)];
     defs.push({ section: sdef.name });
     defs.push({
-      id: `s${k}_mine`, name: 'Mining Speed',
+      id: `s${k}_mine`, name: 'Mining Speed', mul: 1.15,
       get: () => zone.shafts[localK].mineLevel,
       eff: () => fmtTime(shaftMineTime(z, localK)) + ' / cycle',
       cost: () => COSTS.shaftMine(z, localK),
       buy:  () => zone.shafts[localK].mineLevel++,
     });
     defs.push({
-      id: `s${k}_cap`, name: 'Shaft Capacity',
+      id: `s${k}_cap`, name: 'Shaft Capacity', mul: 1.20,
       get: () => zone.shafts[localK].capLevel,
       eff: () => 'cap ' + fmt(shaftOreCap(z, localK)),
       cost: () => COSTS.shaftCap(z, localK),
       buy:  () => zone.shafts[localK].capLevel++,
     });
     defs.push({
-      id: `s${k}_miner`, name: 'Hire Miner',
+      id: `s${k}_miner`, name: 'Hire Miner', mul: 1.40,
       get: () => zone.shafts[localK].minerLevel,
       eff: () => shaftMinerCount(z, localK) + ' miners (' + fmt(shaftYieldPerCycle(z, localK)) + ' ore/cycle)',
       cost: () => COSTS.shaftMiner(z, localK),
@@ -973,23 +973,23 @@ function getUpgradeDefs() {
   }
 
   defs.push({ section: 'Elevator' });
-  defs.push({ id: 'elev_speed', name: 'Elevator Speed', get: () => zone.elevator.speedLevel, eff: () => fmt(elevatorSpeed(z)) + ' shafts/s', cost: () => COSTS.elevSpeed(z), buy: () => zone.elevator.speedLevel++ });
-  defs.push({ id: 'elev_cap',   name: 'Elevator Capacity', get: () => zone.elevator.capLevel, eff: () => 'cap ' + fmt(elevatorCap(z)), cost: () => COSTS.elevCap(z), buy: () => zone.elevator.capLevel++ });
+  defs.push({ id: 'elev_speed', name: 'Elevator Speed', mul: 1.18, get: () => zone.elevator.speedLevel, eff: () => fmt(elevatorSpeed(z)) + ' shafts/s', cost: () => COSTS.elevSpeed(z), buy: () => zone.elevator.speedLevel++ });
+  defs.push({ id: 'elev_cap',   name: 'Elevator Capacity', mul: 1.22, get: () => zone.elevator.capLevel, eff: () => 'cap ' + fmt(elevatorCap(z)), cost: () => COSTS.elevCap(z), buy: () => zone.elevator.capLevel++ });
   if (!zone.elevator.auto) {
     defs.push({ id: 'elev_auto', name: '🎩 Hire Operator', oneShot: true, eff: () => 'Auto-runs the elevator', cost: () => COSTS.elevAuto(z), buy: () => { zone.elevator.auto = true; } });
   }
 
   defs.push({ section: 'Surface Worker' });
-  defs.push({ id: 'worker_speed', name: 'Worker Speed', get: () => zone.worker.speedLevel, eff: () => fmt(workerSpeed(z)) + ' /s', cost: () => COSTS.workerSpeed(z), buy: () => zone.worker.speedLevel++ });
-  defs.push({ id: 'worker_cap',   name: 'Worker Capacity', get: () => zone.worker.capLevel, eff: () => 'cap ' + fmt(workerCap(z)), cost: () => COSTS.workerCap(z), buy: () => zone.worker.capLevel++ });
+  defs.push({ id: 'worker_speed', name: 'Worker Speed', mul: 1.15, get: () => zone.worker.speedLevel, eff: () => fmt(workerSpeed(z)) + ' /s', cost: () => COSTS.workerSpeed(z), buy: () => zone.worker.speedLevel++ });
+  defs.push({ id: 'worker_cap',   name: 'Worker Capacity', mul: 1.22, get: () => zone.worker.capLevel, eff: () => 'cap ' + fmt(workerCap(z)), cost: () => COSTS.workerCap(z), buy: () => zone.worker.capLevel++ });
   if (!zone.worker.auto) {
     defs.push({ id: 'worker_auto', name: '👷 Hire Hauler', oneShot: true, eff: () => 'Auto-hauls ore to the processor', cost: () => COSTS.workerAuto(z), buy: () => { zone.worker.auto = true; } });
   }
 
   defs.push({ section: 'Processor' });
-  defs.push({ id: 'proc_speed', name: 'Processing Speed', get: () => zone.processor.speedLevel, eff: () => fmtCycleRate(processorTime(z)), cost: () => COSTS.procSpeed(z), buy: () => zone.processor.speedLevel++ });
-  defs.push({ id: 'proc_value', name: 'Ore Value',        get: () => zone.processor.valueLevel, eff: () => '$' + fmt(processorValue(z)) + ' / ore', cost: () => COSTS.procValue(z), buy: () => zone.processor.valueLevel++ });
-  defs.push({ id: 'proc_par',   name: 'Parallel Processing', get: () => zone.processor.parallelLevel, eff: () => fmt(processorParallel(z)) + ' ore / cycle', cost: () => COSTS.procParallel(z), buy: () => zone.processor.parallelLevel++ });
+  defs.push({ id: 'proc_speed', name: 'Processing Speed', mul: 1.20, get: () => zone.processor.speedLevel, eff: () => fmtCycleRate(processorTime(z)), cost: () => COSTS.procSpeed(z), buy: () => zone.processor.speedLevel++ });
+  defs.push({ id: 'proc_value', name: 'Ore Value',        mul: 1.30, get: () => zone.processor.valueLevel, eff: () => '$' + fmt(processorValue(z)) + ' / ore', cost: () => COSTS.procValue(z), buy: () => zone.processor.valueLevel++ });
+  defs.push({ id: 'proc_par',   name: 'Parallel Processing', mul: 2.00, get: () => zone.processor.parallelLevel, eff: () => fmt(processorParallel(z)) + ' ore / cycle', cost: () => COSTS.procParallel(z), buy: () => zone.processor.parallelLevel++ });
   if (!zone.processor.auto) {
     defs.push({ id: 'proc_auto', name: '🤖 Hire Operator', oneShot: true, eff: () => 'Auto-processes ore', cost: () => COSTS.procAuto(z), buy: () => { zone.processor.auto = true; } });
   }
@@ -1012,18 +1012,30 @@ function buildUpgradesPanel() {
     }
     const el = document.createElement('div');
     el.className = 'upgrade' + (def.oneShot ? ' upgrade-manager' : '');
+    const bulkRow = def.oneShot
+      ? ''
+      : `<div class="upgrade-bulk">
+           <button class="bulk-btn" data-n="5">+5</button>
+           <button class="bulk-btn" data-n="10">+10</button>
+         </div>`;
     el.innerHTML = `
       <div class="upgrade-name">${def.name} <span class="upgrade-lv"></span></div>
       <div class="upgrade-effect"></div>
       <div class="upgrade-cost"></div>
+      ${bulkRow}
     `;
     el.addEventListener('click', () => buyUpgrade(def));
     root.appendChild(el);
+    const bulk5  = el.querySelector('.bulk-btn[data-n="5"]');
+    const bulk10 = el.querySelector('.bulk-btn[data-n="10"]');
+    if (bulk5)  bulk5.addEventListener('click', e => { e.stopPropagation(); buyUpgradeBulk(def, 5); });
+    if (bulk10) bulk10.addEventListener('click', e => { e.stopPropagation(); buyUpgradeBulk(def, 10); });
     refs.upgrades[def.id] = {
       el,
-      lv:   el.querySelector('.upgrade-lv'),
-      eff:  el.querySelector('.upgrade-effect'),
-      cost: el.querySelector('.upgrade-cost'),
+      lv:    el.querySelector('.upgrade-lv'),
+      eff:   el.querySelector('.upgrade-effect'),
+      cost:  el.querySelector('.upgrade-cost'),
+      bulk5, bulk10,
       def,
     };
   }
@@ -1036,6 +1048,31 @@ function buyUpgrade(def) {
   def.buy();
   if (def.oneShot) buildUpgradesPanel();
   saveSoon();
+}
+
+// Closed-form geometric sum for the cost of buying `n` levels at the def's
+// fixed cost multiplier. cost(L+i) = cost(L) * mul^i, so total = cost(L) *
+// (mul^n - 1) / (mul - 1). Returns null for one-shot defs (no level concept).
+function bulkCostPreview(def, n) {
+  if (def.oneShot || !def.mul || !def.cost) return null;
+  const c = def.cost();
+  if (def.mul === 1) return c * n;
+  return c * (Math.pow(def.mul, n) - 1) / (def.mul - 1);
+}
+
+// Buy up to `max` levels — stops early if money runs out, so a "+10" tap on
+// a half-affordable upgrade still buys what it can.
+function buyUpgradeBulk(def, max) {
+  if (def.oneShot) return;
+  let bought = 0;
+  for (let i = 0; i < max; i++) {
+    const c = def.cost();
+    if (state.money < c) break;
+    state.money -= c;
+    def.buy();
+    bought++;
+  }
+  if (bought > 0) saveSoon();
 }
 
 // ---------- CHARACTER SVGs ----------
@@ -1231,6 +1268,16 @@ function render() {
     const afford = state.money >= cost;
     u.el.classList.toggle('disabled', !afford);
     u.el.classList.toggle('affordable', afford);
+    if (u.bulk5) {
+      const c5 = bulkCostPreview(u.def, 5);
+      setText(u.bulk5, '+5 $' + fmt(c5));
+      u.bulk5.classList.toggle('afford', state.money >= c5);
+    }
+    if (u.bulk10) {
+      const c10 = bulkCostPreview(u.def, 10);
+      setText(u.bulk10, '+10 $' + fmt(c10));
+      u.bulk10.classList.toggle('afford', state.money >= c10);
+    }
   }
 
   // detect when scene needs full rebuild (a new shaft unlocked, the
