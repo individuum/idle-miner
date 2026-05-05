@@ -580,15 +580,64 @@ function buildShafts() {
       refs.shafts[k].lock.addEventListener('click', () => tryUnlockShaft(k));
     }
   }
+  appendZoneGateway(root, z);
   updateUndergroundHeight();
   for (let k = 0; k < refs.shafts.length; k++) {
     if (refs.shafts[k] && state.zones[z].shafts[k].unlocked) rebuildMiners(k);
   }
 }
 
+// Once every shaft of the current zone is unlocked, render a "gateway" row
+// at the bottom that points to the next zone — either a clickable unlock
+// prompt (mirrors the old barrier pattern) or a switch-to-zone link if it's
+// already unlocked. This makes zone progression discoverable from inside
+// the scene, not only via the tab strip.
+function appendZoneGateway(root, z) {
+  const allUnlocked = state.zones[z].shafts.every(s => s.unlocked);
+  if (!allUnlocked) return;
+  const nextZ = z + 1;
+  if (nextZ >= ZONE_DEFS.length) return;
+  const nextDef = ZONE_DEFS[nextZ];
+  const unlocked = state.zonesUnlocked[nextZ];
+
+  const el = document.createElement('div');
+  el.className = 'zone-gateway' + (unlocked ? ' unlocked' : '');
+  el.dataset.zone = nextDef.id;
+  if (unlocked) {
+    el.innerHTML = `
+      <div class="gateway-tunnel">
+        <div class="gateway-icon">${nextDef.icon}</div>
+        <div class="gateway-info">
+          <div class="gateway-name">Travel to ${nextDef.name}</div>
+          <div class="gateway-sub">Already unlocked — switch zones</div>
+        </div>
+        <div class="gateway-arrow">→</div>
+      </div>
+    `;
+    el.addEventListener('click', () => switchZone(nextZ));
+  } else {
+    el.innerHTML = `
+      <div class="gateway-tunnel locked">
+        <div class="gateway-icon">${nextDef.icon}</div>
+        <div class="gateway-info">
+          <div class="gateway-name">Unlock ${nextDef.name}</div>
+          <div class="gateway-sub">A new mine awaits — its own pipeline</div>
+        </div>
+        <div class="gateway-cost">$${fmt(nextDef.unlockCost)}</div>
+      </div>
+    `;
+    el.addEventListener('click', () => tryUnlockZone(nextZ));
+  }
+  root.appendChild(el);
+}
+
 function updateUndergroundHeight() {
+  const z = state.currentZone;
   const rowCount = getVisibleShaftRows().length;
-  const h = 30 + rowCount * 100;
+  const allUnlocked = state.zones[z].shafts.every(s => s.unlocked);
+  const hasGateway = allUnlocked && z < ZONE_DEFS.length - 1;
+  const totalRows = rowCount + (hasGateway ? 1 : 0);
+  const h = 30 + totalRows * 100;
   document.querySelector('.underground').style.minHeight = h + 'px';
 }
 
@@ -882,8 +931,11 @@ function render() {
     u.el.classList.toggle('affordable', afford);
   }
 
-  // detect when scene needs full rebuild (a new shaft became unlocked)
-  const expectedRows = getVisibleShaftRows().length;
+  // detect when scene needs full rebuild (a new shaft unlocked, or the
+  // zone-gateway row needs to appear/disappear)
+  const allUnlocked = zone.shafts.every(s => s.unlocked);
+  const wantGateway = allUnlocked && z < ZONE_DEFS.length - 1;
+  const expectedRows = getVisibleShaftRows().length + (wantGateway ? 1 : 0);
   const renderedRows = $('shafts').children.length;
   if (renderedRows !== expectedRows) {
     buildShafts();

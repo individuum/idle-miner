@@ -287,6 +287,80 @@ body {
   50%      { transform: rotate(20deg); }
 }
 
+/* ---------- ZONE GATEWAY ROW ---------- */
+.zone-gateway {
+  height: 100px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.gateway-tunnel {
+  position: absolute;
+  left: calc(50% + 22px);
+  right: 12px;
+  height: 64px;
+  top: 18px;
+  background:
+    linear-gradient(180deg, var(--tunnel-bg, linear-gradient(180deg, var(--accent), #6a3010)));
+  border: 2px solid var(--tunnel-border, var(--accent));
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 12px;
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.5), 0 0 12px rgba(245,197,66,0.25);
+}
+.gateway-tunnel.locked {
+  background:
+    repeating-linear-gradient(45deg, rgba(0,0,0,0.25) 0 6px, rgba(0,0,0,0) 6px 12px),
+    var(--tunnel-bg, linear-gradient(180deg, #6a4838, #3a2010));
+  border-color: var(--tunnel-border, #1a0e08);
+}
+.zone-gateway:hover .gateway-tunnel { filter: brightness(1.15); }
+.gateway-icon {
+  font-size: 28px;
+  filter: drop-shadow(0 2px 0 rgba(0,0,0,0.6));
+}
+.gateway-info { flex: 1; min-width: 0; }
+.gateway-name {
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+}
+.gateway-sub {
+  font-size: 11px;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gateway-cost {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 900;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+  border: 2px solid #1a1a1a;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+}
+.gateway-arrow {
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--gold);
+  text-shadow: 1px 1px 0 #000;
+}
+.zone-gateway.unlocked .gateway-tunnel {
+  background: var(--tunnel-bg, linear-gradient(180deg, #5a4030, #2a1810));
+  border-color: var(--tunnel-border, var(--good));
+  box-shadow: inset 0 0 12px rgba(0,0,0,0.4), 0 0 8px rgba(106,190,106,0.25);
+}
+
 /* ---------- BARRIER ROW ---------- */
 .barrier {
   height: 100px;
@@ -1138,11 +1212,13 @@ body {
   .worker-body .char-hauler { width: 32px; height: 38px; }
   .worker-cargo { font-size: 9px; padding: 1px 3px; min-width: 16px; }
 
-  /* Barrier */
-  .barrier-icon { font-size: 24px; }
-  .barrier-name { font-size: 12px; }
-  .barrier-desc { font-size: 10px; }
-  .barrier-action { padding: 5px 9px; font-size: 11px; }
+  /* Barrier (legacy) + Gateway */
+  .barrier-icon, .gateway-icon { font-size: 24px; }
+  .barrier-name, .gateway-name { font-size: 12px; }
+  .barrier-desc, .gateway-sub { font-size: 10px; }
+  .barrier-action, .gateway-cost { padding: 5px 9px; font-size: 11px; }
+  .gateway-arrow { font-size: 20px; }
+  .gateway-tunnel { left: 56px; right: 8px; padding: 0 10px; gap: 8px; }
 
   /* Mine progress bar — drop the max-width cap so it fills the shaft */
   .mine-progress { max-width: none; }
