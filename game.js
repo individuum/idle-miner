@@ -133,6 +133,8 @@ function freshState() {
     currentZone: 0,
     zonesUnlocked: ZONE_DEFS.map((_, z) => z === 0),
     zones: ZONE_DEFS.map((_, z) => freshZone(z)),
+    activeBuffs: [],
+    nextArtifactAt: Date.now() + 30000 + Math.random() * 30000,
     lastTimestamp: Date.now(),
   };
 }
@@ -163,19 +165,44 @@ function currentRate() {
 }
 function resetRateBuffer() { _rateBuffer = []; _rateLastSampleAt = 0; }
 
+// ---------- BUFFS ----------
+// Artifacts grant time-limited multiplicative buffs. Multiple buffs of the
+// same type stack (e.g. two speed buffs → 4x mining speed).
+const BUFF_TYPES = [
+  { id: 'speed', icon: '⚡', label: 'Mining +100%',     duration: 30000, multiplier: 2.0,
+    desc: 'Mining cycles run twice as fast' },
+  { id: 'yield', icon: '⛏', label: 'Yield +100%',      duration: 30000, multiplier: 2.0,
+    desc: 'Each cycle drops twice as much ore' },
+  { id: 'value', icon: '💰', label: 'Ore Value 3×',     duration: 45000, multiplier: 3.0,
+    desc: 'Processed ore sells for 3× the price' },
+  { id: 'proc',  icon: '⚙',  label: 'Process Speed 2×', duration: 30000, multiplier: 2.0,
+    desc: 'Processor cycles twice as fast' },
+];
+function buffMul(typeId) {
+  const now = Date.now();
+  let mul = 1;
+  for (const b of state.activeBuffs) {
+    if (b.expiresAt > now && b.type === typeId) mul *= b.multiplier;
+  }
+  return mul;
+}
+function buffByType(typeId) { return BUFF_TYPES.find(b => b.id === typeId); }
+
 // ---------- FORMULAS ----------
 function shaftMineTime(z, k) {
   const lvl = state.zones[z].shafts[k].mineLevel;
   const base = SHAFT_DEFS[gIdx(z, k)].baseTime;
-  if (lvl <= 25) return base / Math.pow(1.10, lvl - 1);
-  return base / Math.pow(1.10, 24) / Math.pow(1.04, lvl - 25);
+  let t;
+  if (lvl <= 25) t = base / Math.pow(1.10, lvl - 1);
+  else t = base / Math.pow(1.10, 24) / Math.pow(1.04, lvl - 25);
+  return t / buffMul('speed');
 }
 function shaftOreCap(z, k) {
   return Math.floor(SHAFT_DEFS[gIdx(z, k)].baseCap * Math.pow(1.25, state.zones[z].shafts[k].capLevel - 1));
 }
 function shaftOrePerCycle(z, k) { return SHAFT_DEFS[gIdx(z, k)].baseOre; }
 function shaftMinerCount(z, k)  { return state.zones[z].shafts[k].minerLevel; }
-function shaftYieldPerCycle(z, k) { return shaftOrePerCycle(z, k) * shaftMinerCount(z, k); }
+function shaftYieldPerCycle(z, k) { return Math.floor(shaftOrePerCycle(z, k) * shaftMinerCount(z, k) * buffMul('yield')); }
 
 function elevatorSpeed(z) { return 1.0 * Math.pow(1.10, state.zones[z].elevator.speedLevel - 1); }
 function elevatorCap(z)   { return Math.floor(5 * Math.pow(1.30, state.zones[z].elevator.capLevel - 1)); }
@@ -186,7 +213,7 @@ function processorTime(z) {
   const lvl = state.zones[z].processor.speedLevel;
   // No late-game cap — speedLevel cost grows 1.20x/level so per-level ROI
   // diminishes naturally. 1.12x effect / 1.20x cost = 0.93x per level.
-  return 1.5 / Math.pow(1.12, lvl - 1);
+  return (1.5 / Math.pow(1.12, lvl - 1)) / buffMul('proc');
 }
 function processorValue(z) {
   const lvl = state.zones[z].processor.valueLevel;
@@ -194,9 +221,11 @@ function processorValue(z) {
   // 1-15  : 1.35x per level
   // 16-30 : 1.10x per level (mild post-cap)
   // 31+   : 1.05x per level (hard post-cap)
-  if (lvl <= 15) return 2 * Math.pow(1.35, lvl - 1);
-  if (lvl <= 30) return 2 * Math.pow(1.35, 14) * Math.pow(1.10, lvl - 15);
-  return 2 * Math.pow(1.35, 14) * Math.pow(1.10, 15) * Math.pow(1.05, lvl - 30);
+  let v;
+  if (lvl <= 15) v = 2 * Math.pow(1.35, lvl - 1);
+  else if (lvl <= 30) v = 2 * Math.pow(1.35, 14) * Math.pow(1.10, lvl - 15);
+  else v = 2 * Math.pow(1.35, 14) * Math.pow(1.10, 15) * Math.pow(1.05, lvl - 30);
+  return v * buffMul('value');
 }
 function processorParallel(z) { return state.zones[z].processor.parallelLevel; }
 
@@ -251,6 +280,32 @@ function fmtCycleRate(t) {
 function tick(dt) {
   for (let z = 0; z < ZONE_DEFS.length; z++) {
     if (state.zonesUnlocked[z]) tickZone(z, dt);
+  }
+  tickBuffs();
+  if (!_offlineCatchup) tickArtifacts();
+}
+
+// Drop expired buffs once they pass their expiry.
+function tickBuffs() {
+  if (!state.activeBuffs || state.activeBuffs.length === 0) return;
+  const now = Date.now();
+  let changed = false;
+  for (let i = state.activeBuffs.length - 1; i >= 0; i--) {
+    if (state.activeBuffs[i].expiresAt <= now) {
+      state.activeBuffs.splice(i, 1);
+      changed = true;
+    }
+  }
+  if (changed) refreshBuffsUI();
+}
+
+let _activeArtifact = null;
+function tickArtifacts() {
+  const now = Date.now();
+  if (_activeArtifact && now > _activeArtifact.despawnAt) removeArtifact();
+  if (state.nextArtifactAt && now >= state.nextArtifactAt && !_activeArtifact) {
+    spawnArtifact();
+    state.nextArtifactAt = now + 30000 + Math.random() * 60000; // 30-90s
   }
 }
 
@@ -542,6 +597,110 @@ function pulseClick(el) {
   el.classList.remove('click-pulse');
   void el.offsetWidth;
   el.classList.add('click-pulse');
+}
+
+// ---------- ARTIFACTS ----------
+function pickRandomBuffType() { return BUFF_TYPES[Math.floor(Math.random() * BUFF_TYPES.length)]; }
+
+function spawnArtifact() {
+  // Pick a random unlocked shaft in the current zone to anchor the spawn over.
+  const z = state.currentZone;
+  const unlockedKs = [];
+  for (let k = 0; k < state.zones[z].shafts.length; k++) {
+    if (state.zones[z].shafts[k].unlocked && refs.shafts[k]) unlockedKs.push(k);
+  }
+  if (unlockedKs.length === 0) return;
+  const k = unlockedKs[Math.floor(Math.random() * unlockedKs.length)];
+  const shaftEl = refs.shafts[k].tunnel;
+  const buff = pickRandomBuffType();
+
+  const fx = $('fx');
+  const r = shaftEl.getBoundingClientRect();
+  const root = fx.getBoundingClientRect();
+  const el = document.createElement('button');
+  el.className = 'artifact';
+  el.dataset.buff = buff.id;
+  el.title = `${buff.label} — tap to collect`;
+  el.innerHTML = `<span class="artifact-icon">${buff.icon}</span><span class="artifact-glow"></span>`;
+  el.style.left = (r.left - root.left + r.width * (0.2 + Math.random() * 0.6)) + 'px';
+  el.style.top  = (r.top  - root.top  + r.height * (0.1 + Math.random() * 0.4)) + 'px';
+  el.addEventListener('click', (e) => { e.stopPropagation(); collectArtifact(buff); });
+  fx.appendChild(el);
+
+  _activeArtifact = { el, despawnAt: Date.now() + 18000 };
+}
+
+function removeArtifact() {
+  if (!_activeArtifact) return;
+  if (_activeArtifact.el && _activeArtifact.el.parentNode) {
+    _activeArtifact.el.classList.add('despawning');
+    const dyingEl = _activeArtifact.el;
+    setTimeout(() => dyingEl.remove(), 300);
+  }
+  _activeArtifact = null;
+}
+
+function collectArtifact(buff) {
+  if (!_activeArtifact) return;
+  const proto = buffByType(buff.id);
+  if (!proto) return;
+  state.activeBuffs.push({
+    type: proto.id,
+    multiplier: proto.multiplier,
+    expiresAt: Date.now() + proto.duration,
+    icon: proto.icon,
+    label: proto.label,
+  });
+  // little reward burst at the artifact location
+  const fx = $('fx');
+  const root = fx.getBoundingClientRect();
+  const r = _activeArtifact.el.getBoundingClientRect();
+  for (let i = 0; i < 8; i++) {
+    const sp = document.createElement('div');
+    sp.className = 'fx-spark';
+    sp.style.left = (r.left - root.left + r.width / 2) + 'px';
+    sp.style.top  = (r.top  - root.top  + r.height / 2) + 'px';
+    sp.style.setProperty('--ang', (i * 45) + 'deg');
+    fx.appendChild(sp);
+    setTimeout(() => sp.remove(), 700);
+  }
+  spawnPow(_activeArtifact.el, '+ ' + proto.label.toUpperCase());
+  removeArtifact();
+  refreshBuffsUI();
+  saveSoon();
+}
+
+function refreshBuffsUI() {
+  const root = $('buffs-bar');
+  if (!root) return;
+  root.innerHTML = '';
+  if (!state.activeBuffs || state.activeBuffs.length === 0) return;
+  // Group identical-type buffs into a single chip with a stack count, so a
+  // dozen overlapping pickups don't fill the HUD.
+  const grouped = new Map();
+  for (const b of state.activeBuffs) {
+    if (!grouped.has(b.type)) grouped.set(b.type, []);
+    grouped.get(b.type).push(b);
+  }
+  for (const [typeId, list] of grouped) {
+    const def = buffByType(typeId);
+    const totalMul = list.reduce((m, b) => m * b.multiplier, 1);
+    const maxExpiry = Math.max(...list.map(b => b.expiresAt));
+    const chip = document.createElement('div');
+    chip.className = 'buff-chip';
+    chip.innerHTML = `
+      <span class="buff-icon">${def.icon}</span>
+      <span class="buff-mul">×${totalMul.toFixed(totalMul < 10 ? 1 : 0)}</span>
+      <span class="buff-time" data-expires="${maxExpiry}">·</span>
+    `;
+    if (list.length > 1) {
+      const stack = document.createElement('span');
+      stack.className = 'buff-stack';
+      stack.textContent = list.length + '×';
+      chip.appendChild(stack);
+    }
+    root.appendChild(chip);
+  }
 }
 
 // ---------- DOM REFS ----------
@@ -966,6 +1125,19 @@ function render() {
   setText($('money'), fmt(state.money));
   setText($('rate'), '$' + fmt(currentRate()));
 
+  // buff timer countdowns — update each frame so chips visibly drain
+  const buffsBar = $('buffs-bar');
+  if (buffsBar && buffsBar.children.length) {
+    const now = Date.now();
+    for (const chip of buffsBar.children) {
+      const timeEl = chip.querySelector('.buff-time');
+      if (!timeEl) continue;
+      const expires = parseInt(timeEl.dataset.expires, 10);
+      const remaining = Math.max(0, Math.ceil((expires - now) / 1000));
+      setText(timeEl, remaining + 's');
+    }
+  }
+
   const z = state.currentZone;
   const zone = state.zones[z];
 
@@ -985,12 +1157,22 @@ function render() {
     const s = zone.shafts[k];
     if (s.unlocked) {
       r.el.classList.remove('locked');
-      setText(r.ore, fmt(s.ore) + '/' + fmt(shaftOreCap(z, k)));
-      setStyle(r.bar, 'width', Math.min(100, (s.progress / shaftMineTime(z, k)) * 100) + '%');
-      const mining = s.ore < shaftOreCap(z, k);
+      const cap = shaftOreCap(z, k);
+      setText(r.ore, fmt(s.ore) + '/' + fmt(cap));
+      // Bar shows ore-pile fill, not cycle progress — meaningful at any speed.
+      setStyle(r.bar, 'width', Math.min(100, (s.ore / cap) * 100) + '%');
+      // Tie miner-arm animation to mineTime so the swing tempo visibly tracks
+      // mining speed at any level. Clamp so it stays readable.
+      const t = shaftMineTime(z, k);
+      const animDur = Math.max(0.08, Math.min(1.2, t)).toFixed(3) + 's';
+      if (r._lastAnimDur !== animDur) {
+        r.el.style.setProperty('--mine-anim-duration', animDur);
+        r._lastAnimDur = animDur;
+      }
+      const mining = s.ore < cap;
       r.el.classList.toggle('mining', mining && s.autoMine);
       r.el.classList.toggle('manual', !s.autoMine);
-      r.el.classList.toggle('full', s.ore >= shaftOreCap(z, k));
+      r.el.classList.toggle('full', s.ore >= cap);
       if (r.lastMinerLevel !== s.minerLevel) rebuildMiners(k);
     } else {
       r.el.classList.add('locked');
@@ -1223,6 +1405,7 @@ function rebuildAll() {
   buildShafts();
   buildUpgradesPanel();
   $('scene-bg').dataset.zone = ZONE_DEFS[state.currentZone].id;
+  refreshBuffsUI();
   resetRateBuffer();
 }
 
@@ -1244,6 +1427,8 @@ function init() {
   buildTabs();
   buildShafts();
   buildUpgradesPanel();
+
+  refreshBuffsUI();
 
   if (had) {
     const earned = applyOfflineProgress();

@@ -245,7 +245,7 @@ body {
 }
 .shaft.mining .miner-slot .char-miner .miner-arm,
 .shaft.manual:not(.locked):not(.full) .miner-slot .char-miner .miner-arm {
-  animation: armSwing 0.55s cubic-bezier(.4,.05,.6,1) infinite;
+  animation: armSwing var(--mine-anim-duration, 0.55s) cubic-bezier(.4,.05,.6,1) infinite;
 }
 @keyframes armSwing {
   0%, 100% { transform: rotate(-35deg); }
@@ -255,7 +255,7 @@ body {
 }
 .shaft.mining .miner-slot,
 .shaft.manual:not(.locked):not(.full) .miner-slot {
-  animation: bodyBob 0.55s ease-in-out infinite;
+  animation: bodyBob var(--mine-anim-duration, 0.55s) ease-in-out infinite;
 }
 @keyframes bodyBob {
   0%, 100% { transform: translateY(0); }
@@ -570,6 +570,115 @@ body {
   0%   { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
   20%  { opacity: 0.7; }
   100% { transform: translate(-50%, -22px) scale(1.4); opacity: 0; }
+}
+
+/* ---------- BUFFS BAR (HUD) ---------- */
+.buffs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+  justify-content: flex-end;
+  margin-right: 6px;
+}
+.buff-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: linear-gradient(135deg, rgba(245,197,66,0.25), rgba(224,122,61,0.18));
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--gold);
+  text-shadow: 0 1px 0 #000;
+  position: relative;
+  animation: buffChipPulse 1.6s ease-in-out infinite;
+}
+@keyframes buffChipPulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(245,197,66,0); }
+  50%      { box-shadow: 0 0 8px rgba(245,197,66,0.55); }
+}
+.buff-icon { font-size: 14px; line-height: 1; }
+.buff-mul { color: #fff; }
+.buff-time { opacity: 0.75; font-size: 10px; min-width: 26px; text-align: right; }
+.buff-stack {
+  position: absolute;
+  top: -6px; right: -6px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  border-radius: 999px;
+  padding: 1px 5px;
+  border: 1px solid #1a1a1a;
+}
+
+/* ---------- ARTIFACTS ---------- */
+.artifact {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  z-index: 60;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  pointer-events: auto;
+  filter: drop-shadow(0 0 8px rgba(255,220,120,0.7));
+  animation: artifactBob 1.8s ease-in-out infinite, artifactRot 6s linear infinite;
+}
+.artifact .artifact-icon {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  font-size: 24px;
+  text-shadow: 0 0 8px rgba(255,220,120,0.9), 0 1px 0 #000, 0 -1px 0 #000;
+}
+.artifact .artifact-glow {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,230,120,0.7), rgba(255,160,40,0.2) 60%, transparent 75%);
+  animation: artifactPulse 1.4s ease-in-out infinite;
+}
+.artifact:hover { filter: drop-shadow(0 0 14px rgba(255,255,180,1)); }
+.artifact:active { transform: translate(-50%, -50%) scale(0.92); }
+.artifact.despawning {
+  animation: artifactFade 0.3s ease-out forwards !important;
+}
+@keyframes artifactBob {
+  0%, 100% { transform: translate(-50%, -50%) translateY(0); }
+  50%      { transform: translate(-50%, -50%) translateY(-8px); }
+}
+@keyframes artifactRot {
+  from { rotate: 0deg; }
+  to   { rotate: 360deg; }
+}
+@keyframes artifactPulse {
+  0%, 100% { opacity: 0.7; transform: scale(1); }
+  50%      { opacity: 1.0; transform: scale(1.18); }
+}
+@keyframes artifactFade {
+  to { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
+}
+
+.fx-spark {
+  position: absolute;
+  width: 6px; height: 6px;
+  background: radial-gradient(circle, #fff, #ffe080);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 60;
+  transform: translate(-50%, -50%);
+  animation: sparkFly 0.7s ease-out forwards;
+}
+@keyframes sparkFly {
+  0%   { opacity: 1; transform: translate(-50%, -50%) translate(0, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) translate(calc(cos(var(--ang)) * 36px), calc(sin(var(--ang)) * 36px)) scale(0.4); }
 }
 
 /* ---------- SETTINGS MODAL ---------- */
@@ -1133,6 +1242,14 @@ body {
   .rate { font-size: 12px; }
   .reset-btn { font-size: 11px; padding: 5px 10px; }
   .hud-btn { font-size: 16px; padding: 4px 8px; }
+  .buffs-bar { gap: 4px; margin-right: 4px; }
+  .buff-chip { padding: 2px 7px; font-size: 10px; }
+  .buff-icon { font-size: 12px; }
+  .buff-time { font-size: 9px; min-width: 22px; }
+
+  /* Artifact: slightly smaller on phones */
+  .artifact { width: 34px; height: 34px; }
+  .artifact .artifact-icon { font-size: 20px; }
 
   /* Zone tabs */
   .zone-tabs { gap: 4px; padding: 2px 0 6px; margin-bottom: 6px; }
