@@ -1,26 +1,21 @@
 'use strict';
 
-const SAVE_KEY = 'idleminer_save_v4';
+const SAVE_KEY = 'idleminer_save_v5';
 const OFFLINE_CAP_SEC = 4 * 60 * 60;
 
 // ---------- ZONES ----------
-// Each zone is a contiguous run of shafts that share a visual theme. The
-// barrier between zones (in BARRIER_DEFS) gates progression into the next.
+// Each zone is a self-contained mine with its own shafts, elevator, worker
+// and processor. Money is shared across zones; production runs in parallel.
 const ZONE_DEFS = [
-  { id: 'surface',  name: 'Surface Mine',    firstShaft: 0,  lastShaft: 3  },
-  { id: 'deep',     name: 'Deep Earth',      firstShaft: 4,  lastShaft: 7  },
-  { id: 'forge',    name: 'Hellforge',       firstShaft: 8,  lastShaft: 11 },
-  { id: 'magma',    name: 'Magma Layer',     firstShaft: 12, lastShaft: 15 },
-  { id: 'ice',      name: 'Glacial Reach',   firstShaft: 16, lastShaft: 19 },
-  { id: 'cosmic',   name: 'Cosmic Verge',    firstShaft: 20, lastShaft: 23 },
+  { id: 'surface', name: 'Surface Mine',  icon: '⛏', firstShaft: 0,  shaftCount: 4, unlockCost: 0      },
+  { id: 'deep',    name: 'Deep Earth',    icon: '🦴', firstShaft: 4,  shaftCount: 4, unlockCost: 5.0e6  },
+  { id: 'forge',   name: 'Hellforge',     icon: '🌋', firstShaft: 8,  shaftCount: 4, unlockCost: 2.0e13 },
+  { id: 'magma',   name: 'Magma Layer',   icon: '🔥', firstShaft: 12, shaftCount: 4, unlockCost: 5.0e20 },
+  { id: 'ice',     name: 'Glacial Reach', icon: '❄',  firstShaft: 16, shaftCount: 4, unlockCost: 1.0e26 },
+  { id: 'cosmic',  name: 'Cosmic Verge',  icon: '✦',  firstShaft: 20, shaftCount: 4, unlockCost: 5.0e33 },
 ];
 
-function zoneOfShaft(i) {
-  for (const z of ZONE_DEFS) if (i >= z.firstShaft && i <= z.lastShaft) return z;
-  return ZONE_DEFS[ZONE_DEFS.length - 1];
-}
-
-// ---------- SHAFT CATALOG ----------
+// ---------- SHAFT CATALOG (global, indexed 0..23) ----------
 const SHAFT_DEFS = [
   // Zone: Surface Mine
   { name: 'Surface Quarry',     unlockCost: 0,        baseTime: 3.0,  baseCap: 10,    baseOre: 2 },
@@ -54,96 +49,127 @@ const SHAFT_DEFS = [
   { name: 'Singularity',        unlockCost: 2.0e39,   baseTime: 45.0, baseCap: 3100,  baseOre: 16777216 },
 ];
 
-// Debris barriers between zone boundaries. afterShaft is 0-indexed.
-const BARRIER_DEFS = [
-  { afterShaft: 3,  name: 'Fossilized Wall', cost: 5.0e6,  icon: '🦴', desc: 'Ancient bones and rock blocking the descent' },
-  { afterShaft: 7,  name: 'Volcanic Debris', cost: 2.0e13, icon: '🌋', desc: 'Hardened lava and pumice choking the shaft' },
-  { afterShaft: 11, name: 'Tectonic Fault',  cost: 5.0e20, icon: '🔥', desc: 'Cracked stone seals the magma layer below' },
-  { afterShaft: 15, name: 'Glacial Wall',    cost: 1.0e26, icon: '❄',  desc: 'A frozen tomb bars the ice depths' },
-  { afterShaft: 19, name: 'Reality Tear',    cost: 5.0e33, icon: '✦',  desc: 'Spacetime frays here — only relentless wealth can mend it' },
-];
+// global shaft index given (zone, localK)
+function gIdx(z, k) { return ZONE_DEFS[z].firstShaft + k; }
 
 // ---------- STATE ----------
+function freshShaft() {
+  return { unlocked: false, mineLevel: 1, capLevel: 1, minerLevel: 1, autoMine: false, ore: 0, progress: 0 };
+}
+function freshElevator() {
+  return { speedLevel: 1, capLevel: 1, cargo: 0, pos: 0, target: 0, stateName: 'idle', timer: 0, auto: false, manualTrip: false };
+}
+function freshWorker() {
+  return { speedLevel: 1, capLevel: 1, cargo: 0, pos: 0, target: 0, stateName: 'idle', timer: 0, auto: false, manualTrip: false };
+}
+function freshProcessor() {
+  return { speedLevel: 1, valueLevel: 1, buffer: 0, progress: 0, auto: false };
+}
+function freshZone(z) {
+  const def = ZONE_DEFS[z];
+  const shafts = [];
+  for (let k = 0; k < def.shaftCount; k++) {
+    const s = freshShaft();
+    if (k === 0) s.unlocked = true; // first shaft of every zone is auto-unlocked
+    shafts.push(s);
+  }
+  return {
+    shafts,
+    elevator: freshElevator(),
+    worker: freshWorker(),
+    processor: freshProcessor(),
+    surfaceDropoff: 0,
+  };
+}
 function freshState() {
   return {
     money: 0,
-    shafts: SHAFT_DEFS.map((d, i) => ({
-      unlocked: i === 0,
-      mineLevel: 1,
-      capLevel: 1,
-      minerLevel: 1,    // # parallel miners
-      autoMine: false,  // foreman hired
-      ore: 0,
-      progress: 0,
-    })),
-    barriers: BARRIER_DEFS.map(() => ({ cleared: false })),
-    elevator: {
-      speedLevel: 1, capLevel: 1,
-      cargo: 0, pos: 0, target: 0,
-      stateName: 'idle', timer: 0,
-      auto: false, manualTrip: false,
-    },
-    surfaceDropoff: 0,
-    worker: {
-      speedLevel: 1, capLevel: 1,
-      cargo: 0, pos: 0, target: 0,
-      stateName: 'idle', timer: 0,
-      auto: false, manualTrip: false,
-    },
-    processor: {
-      speedLevel: 1, valueLevel: 1,
-      buffer: 0, progress: 0,
-      auto: false,
-    },
+    currentZone: 0,
+    zonesUnlocked: ZONE_DEFS.map((_, z) => z === 0),
+    zones: ZONE_DEFS.map((_, z) => freshZone(z)),
     lastTimestamp: Date.now(),
   };
 }
 
 let state = freshState();
+let _offlineCatchup = false;
+
+// rate sampling — fixed-size buffer of money snapshots
+const RATE_WINDOW_SEC = 5;
+const RATE_SAMPLE_HZ = 5;
+const RATE_BUFFER_SIZE = RATE_WINDOW_SEC * RATE_SAMPLE_HZ;
+let _rateBuffer = [];
+let _rateLastSampleAt = 0;
+
+function sampleRate(now) {
+  if (now - _rateLastSampleAt < 1000 / RATE_SAMPLE_HZ) return;
+  _rateLastSampleAt = now;
+  _rateBuffer.push({ t: now, money: state.money });
+  if (_rateBuffer.length > RATE_BUFFER_SIZE) _rateBuffer.shift();
+}
+function currentRate() {
+  if (_rateBuffer.length < 2) return 0;
+  const first = _rateBuffer[0];
+  const last = _rateBuffer[_rateBuffer.length - 1];
+  const dt = (last.t - first.t) / 1000;
+  if (dt <= 0) return 0;
+  return Math.max(0, (last.money - first.money) / dt);
+}
+function resetRateBuffer() { _rateBuffer = []; _rateLastSampleAt = 0; }
 
 // ---------- FORMULAS ----------
-function shaftMineTime(i) {
-  const lvl = state.shafts[i].mineLevel;
-  const base = SHAFT_DEFS[i].baseTime;
+function shaftMineTime(z, k) {
+  const lvl = state.zones[z].shafts[k].mineLevel;
+  const base = SHAFT_DEFS[gIdx(z, k)].baseTime;
   if (lvl <= 25) return base / Math.pow(1.10, lvl - 1);
   return base / Math.pow(1.10, 24) / Math.pow(1.04, lvl - 25);
 }
-function shaftOreCap(i)   { return Math.floor(SHAFT_DEFS[i].baseCap * Math.pow(1.25, state.shafts[i].capLevel - 1)); }
-function shaftOrePerCycle(i) { return SHAFT_DEFS[i].baseOre; }
-function shaftMinerCount(i) { return state.shafts[i].minerLevel; }
-function shaftYieldPerCycle(i) { return shaftOrePerCycle(i) * shaftMinerCount(i); }
-
-function elevatorSpeed() { return 1.0 * Math.pow(1.10, state.elevator.speedLevel - 1); }
-function elevatorCap()   { return Math.floor(5 * Math.pow(1.30, state.elevator.capLevel - 1)); }
-
-function workerSpeed()   { return 0.6 * Math.pow(1.10, state.worker.speedLevel - 1); }
-function workerCap()     { return Math.floor(4 * Math.pow(1.30, state.worker.capLevel - 1)); }
-
-function processorTime() {
-  const lvl = state.processor.speedLevel;
-  if (lvl <= 30) return 1.5 / Math.pow(1.12, lvl - 1);
-  return 1.5 / Math.pow(1.12, 29) / Math.pow(1.04, lvl - 30);
+function shaftOreCap(z, k) {
+  return Math.floor(SHAFT_DEFS[gIdx(z, k)].baseCap * Math.pow(1.25, state.zones[z].shafts[k].capLevel - 1));
 }
-function processorValue() {
-  const lvl = state.processor.valueLevel;
+function shaftOrePerCycle(z, k) { return SHAFT_DEFS[gIdx(z, k)].baseOre; }
+function shaftMinerCount(z, k)  { return state.zones[z].shafts[k].minerLevel; }
+function shaftYieldPerCycle(z, k) { return shaftOrePerCycle(z, k) * shaftMinerCount(z, k); }
+
+function elevatorSpeed(z) { return 1.0 * Math.pow(1.10, state.zones[z].elevator.speedLevel - 1); }
+function elevatorCap(z)   { return Math.floor(5 * Math.pow(1.30, state.zones[z].elevator.capLevel - 1)); }
+function workerSpeed(z)   { return 0.6 * Math.pow(1.10, state.zones[z].worker.speedLevel - 1); }
+function workerCap(z)     { return Math.floor(4 * Math.pow(1.30, state.zones[z].worker.capLevel - 1)); }
+
+function processorTime(z) {
+  const lvl = state.zones[z].processor.speedLevel;
+  // Two-stage soft cap so processing keeps scaling deep into the late game:
+  // 1-30  : 1.12x per level (fast early progression)
+  // 31-60 : 1.08x per level (mild post-cap)
+  // 61+   : 1.05x per level (hard post-cap, but still meaningful)
+  if (lvl <= 30) return 1.5 / Math.pow(1.12, lvl - 1);
+  if (lvl <= 60) return 1.5 / Math.pow(1.12, 29) / Math.pow(1.08, lvl - 30);
+  return 1.5 / Math.pow(1.12, 29) / Math.pow(1.08, 30) / Math.pow(1.05, lvl - 60);
+}
+function processorValue(z) {
+  const lvl = state.zones[z].processor.valueLevel;
   if (lvl <= 18) return 2 * Math.pow(1.35, lvl - 1);
   return 2 * Math.pow(1.35, 17) * Math.pow(1.14, lvl - 18);
 }
 
+// Pipeline costs scale by zone tier so a zone-5 elevator costs proportionally
+// to the wealth available there. 16^z roughly tracks the zone-to-zone yield jump.
+function zoneCostScale(z) { return Math.pow(16, z); }
+
 const COSTS = {
-  shaftMine:  i => 8   * Math.pow(8, i) * Math.pow(1.15, state.shafts[i].mineLevel - 1),
-  shaftCap:   i => 20  * Math.pow(8, i) * Math.pow(1.20, state.shafts[i].capLevel - 1),
-  shaftMiner: i => 40  * Math.pow(8, i) * Math.pow(1.40, state.shafts[i].minerLevel - 1),
-  shaftForeman: i => 75 * Math.pow(40, i),
-  elevSpeed:  () => 30  * Math.pow(1.18, state.elevator.speedLevel - 1),
-  elevCap:    () => 50  * Math.pow(1.22, state.elevator.capLevel - 1),
-  elevAuto:   () => 175,
-  workerSpeed:() => 20  * Math.pow(1.15, state.worker.speedLevel - 1),
-  workerCap:  () => 40  * Math.pow(1.22, state.worker.capLevel - 1),
-  workerAuto: () => 100,
-  procSpeed:  () => 60  * Math.pow(1.20, state.processor.speedLevel - 1),
-  procValue:  () => 120 * Math.pow(1.30, state.processor.valueLevel - 1),
-  procAuto:   () => 600,
+  shaftMine:    (z, k) => 8   * Math.pow(8, gIdx(z, k)) * Math.pow(1.15, state.zones[z].shafts[k].mineLevel - 1),
+  shaftCap:     (z, k) => 20  * Math.pow(8, gIdx(z, k)) * Math.pow(1.20, state.zones[z].shafts[k].capLevel - 1),
+  shaftMiner:   (z, k) => 40  * Math.pow(8, gIdx(z, k)) * Math.pow(1.40, state.zones[z].shafts[k].minerLevel - 1),
+  shaftForeman: (z, k) => 75  * Math.pow(40, gIdx(z, k)),
+  elevSpeed:    (z) => 30  * zoneCostScale(z) * Math.pow(1.18, state.zones[z].elevator.speedLevel - 1),
+  elevCap:      (z) => 50  * zoneCostScale(z) * Math.pow(1.22, state.zones[z].elevator.capLevel - 1),
+  elevAuto:     (z) => 175 * zoneCostScale(z),
+  workerSpeed:  (z) => 20  * zoneCostScale(z) * Math.pow(1.15, state.zones[z].worker.speedLevel - 1),
+  workerCap:    (z) => 40  * zoneCostScale(z) * Math.pow(1.22, state.zones[z].worker.capLevel - 1),
+  workerAuto:   (z) => 100 * zoneCostScale(z),
+  procSpeed:    (z) => 60  * zoneCostScale(z) * Math.pow(1.20, state.zones[z].processor.speedLevel - 1),
+  procValue:    (z) => 120 * zoneCostScale(z) * Math.pow(1.30, state.zones[z].processor.valueLevel - 1),
+  procAuto:     (z) => 600 * zoneCostScale(z),
 };
 
 // ---------- NUMBER FORMAT ----------
@@ -162,78 +188,67 @@ function fmtTime(s) {
   return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
 }
 
-function getBarrierAfter(shaftIdx) {
-  return BARRIER_DEFS.findIndex(b => b.afterShaft === shaftIdx);
-}
-
-// Returns ordered rows to render: [{type:'shaft',idx} | {type:'barrier',idx}]
-function getVisibleRows() {
-  const rows = [];
-  for (let i = 0; i < SHAFT_DEFS.length; i++) {
-    // is there an uncleared barrier blocking this shaft?
-    const bIdx = getBarrierAfter(i - 1);
-    if (bIdx >= 0 && !state.barriers[bIdx].cleared) {
-      rows.push({ type: 'barrier', idx: bIdx });
-      return rows;
-    }
-    rows.push({ type: 'shaft', idx: i });
-    if (!state.shafts[i].unlocked) return rows;
-  }
-  return rows;
-}
-
-function visibleShaftCount() {
-  return getVisibleRows().filter(r => r.type === 'shaft').length;
-}
-
-function totalRowCount() { return getVisibleRows().length; }
-
 // ---------- SIM TICK ----------
 function tick(dt) {
-  // mining (only if foreman hired)
-  for (let i = 0; i < state.shafts.length; i++) {
-    const s = state.shafts[i];
+  for (let z = 0; z < ZONE_DEFS.length; z++) {
+    if (state.zonesUnlocked[z]) tickZone(z, dt);
+  }
+}
+
+function tickZone(z, dt) {
+  const zone = state.zones[z];
+  // mining — closed-form math so very fast shafts (small t, large yield)
+  // don't spin a per-cycle loop. Compute the number of cycles that fit in
+  // accumulated progress, clamp to capacity, then advance state in one shot.
+  for (let k = 0; k < zone.shafts.length; k++) {
+    const s = zone.shafts[k];
     if (!s.unlocked || !s.autoMine) continue;
-    const cap = shaftOreCap(i);
+    const cap = shaftOreCap(z, k);
     if (s.ore >= cap) { s.progress = 0; continue; }
     s.progress += dt;
-    const t = shaftMineTime(i);
-    while (s.progress >= t && s.ore < cap) {
-      s.progress -= t;
-      s.ore = Math.min(cap, s.ore + shaftYieldPerCycle(i));
+    const t = shaftMineTime(z, k);
+    if (s.progress >= t) {
+      const yld = shaftYieldPerCycle(z, k);
+      const slots = Math.floor(s.progress / t);
+      const slotsNeeded = Math.ceil((cap - s.ore) / yld);
+      const used = Math.min(slots, slotsNeeded);
+      s.progress -= used * t;
+      s.ore = Math.min(cap, s.ore + used * yld);
     }
     if (s.ore >= cap) s.progress = 0;
   }
 
   // elevator
-  const ev = state.elevator;
+  const ev = zone.elevator;
   if (ev.stateName === 'idle' && (ev.auto || ev.manualTrip)) {
     if (ev.cargo > 0) { ev.target = 0; ev.stateName = 'ascending'; }
     else {
-      const idx = bestShaftWithOre();
+      const idx = bestShaftWithOre(z);
       if (idx >= 0) { ev.target = idx + 1; ev.stateName = 'descending'; }
       else if (ev.manualTrip) ev.manualTrip = false;
     }
   }
   if (ev.stateName === 'descending' || ev.stateName === 'ascending') {
     const dir = ev.target > ev.pos ? 1 : -1;
-    ev.pos += dir * elevatorSpeed() * dt;
+    ev.pos += dir * elevatorSpeed(z) * dt;
     if ((dir > 0 && ev.pos >= ev.target) || (dir < 0 && ev.pos <= ev.target)) {
       ev.pos = ev.target;
       ev.timer = 0;
       ev.stateName = ev.target === 0 ? 'unloading' : 'loading';
-      spawnPuff('elevator', ev.target === 0 ? 'top' : 'bottom');
+      if (z === state.currentZone) spawnPuff('elevator', ev.target === 0 ? 'top' : 'bottom');
     }
   } else if (ev.stateName === 'loading') {
     ev.timer += dt;
     if (ev.timer >= 0.25) {
-      const i = Math.round(ev.pos) - 1;
-      if (i >= 0 && i < state.shafts.length) {
-        const space = elevatorCap() - ev.cargo;
-        const take = Math.min(space, state.shafts[i].ore);
+      const k = Math.round(ev.pos) - 1;
+      if (k >= 0 && k < zone.shafts.length) {
+        const space = elevatorCap(z) - ev.cargo;
+        const take = Math.min(space, zone.shafts[k].ore);
         ev.cargo += take;
-        state.shafts[i].ore -= take;
-        if (take > 0) spawnOreTransfer(refs.shafts[i] && refs.shafts[i].ore, $('elev-cargo'), take);
+        zone.shafts[k].ore -= take;
+        if (take > 0 && z === state.currentZone) {
+          spawnOreTransfer(refs.shafts[k] && refs.shafts[k].ore, $('elev-cargo'), take);
+        }
       }
       ev.stateName = 'idle';
     }
@@ -241,25 +256,27 @@ function tick(dt) {
     ev.timer += dt;
     if (ev.timer >= 0.25) {
       const dropped = ev.cargo;
-      state.surfaceDropoff += ev.cargo;
+      zone.surfaceDropoff += ev.cargo;
       ev.cargo = 0;
       ev.stateName = 'idle';
       ev.manualTrip = false;
-      if (dropped > 0) spawnOreTransfer($('elev-cargo'), $('dropoff-count'), dropped);
+      if (dropped > 0 && z === state.currentZone) {
+        spawnOreTransfer($('elev-cargo'), $('dropoff-count'), dropped);
+      }
     }
   }
 
   // worker
-  const w = state.worker;
+  const w = zone.worker;
   if (w.stateName === 'idle' && (w.auto || w.manualTrip)) {
     if (w.cargo > 0) { w.target = 1; w.stateName = 'walking_to_proc'; }
-    else if (state.surfaceDropoff > 0 && w.pos === 0) { w.timer = 0; w.stateName = 'pickup'; }
-    else if (state.surfaceDropoff > 0 && w.pos !== 0) { w.target = 0; w.stateName = 'walking_back'; }
+    else if (zone.surfaceDropoff > 0 && w.pos === 0) { w.timer = 0; w.stateName = 'pickup'; }
+    else if (zone.surfaceDropoff > 0 && w.pos !== 0) { w.target = 0; w.stateName = 'walking_back'; }
     else if (w.manualTrip) w.manualTrip = false;
   }
   if (w.stateName === 'walking_to_proc' || w.stateName === 'walking_back') {
     const dir = w.target > w.pos ? 1 : -1;
-    w.pos += dir * workerSpeed() * dt;
+    w.pos += dir * workerSpeed(z) * dt;
     if ((dir > 0 && w.pos >= w.target) || (dir < 0 && w.pos <= w.target)) {
       w.pos = w.target;
       if (w.target === 1) { w.timer = 0; w.stateName = 'dropoff'; }
@@ -268,35 +285,36 @@ function tick(dt) {
   } else if (w.stateName === 'pickup') {
     w.timer += dt;
     if (w.timer >= 0.25) {
-      const take = Math.min(workerCap() - w.cargo, state.surfaceDropoff);
+      const take = Math.min(workerCap(z) - w.cargo, zone.surfaceDropoff);
       w.cargo += take;
-      state.surfaceDropoff -= take;
+      zone.surfaceDropoff -= take;
       w.stateName = 'idle';
     }
   } else if (w.stateName === 'dropoff') {
     w.timer += dt;
     if (w.timer >= 0.25) {
-      state.processor.buffer += w.cargo;
+      zone.processor.buffer += w.cargo;
       w.cargo = 0;
       w.stateName = 'idle';
       w.manualTrip = false;
     }
   }
 
-  // processor — coalesce per-ore allocations: one spawnMoney + one money add per tick
-  const p = state.processor;
+  // processor — closed-form: process up to (progress / t) ores, clamped by buffer.
+  const p = zone.processor;
   if (p.auto && p.buffer > 0) {
     p.progress += dt;
-    const t = processorTime();
-    let earnedTick = 0;
-    while (p.progress >= t && p.buffer > 0) {
-      p.progress -= t;
-      p.buffer -= 1;
-      earnedTick += processorValue();
-    }
-    if (earnedTick > 0) {
-      state.money += earnedTick;
-      spawnMoney(earnedTick);
+    const t = processorTime(z);
+    if (p.progress >= t) {
+      const slots = Math.floor(p.progress / t);
+      const ores = Math.min(slots, p.buffer);
+      if (ores > 0) {
+        p.progress -= ores * t;
+        p.buffer -= ores;
+        const earned = ores * processorValue(z);
+        state.money += earned;
+        if (z === state.currentZone) spawnMoney(earned);
+      }
     }
     if (p.buffer <= 0) p.progress = 0;
   } else if (p.buffer <= 0) {
@@ -304,83 +322,48 @@ function tick(dt) {
   }
 }
 
-function bestShaftWithOre() {
+function bestShaftWithOre(z) {
   let best = -1, bestOre = 0;
-  for (let i = 0; i < state.shafts.length; i++) {
-    const s = state.shafts[i];
-    if (s.unlocked && s.ore > bestOre) { best = i; bestOre = s.ore; }
+  const shafts = state.zones[z].shafts;
+  for (let k = 0; k < shafts.length; k++) {
+    const s = shafts[k];
+    if (s.unlocked && s.ore > bestOre) { best = k; bestOre = s.ore; }
   }
   return best;
 }
 
-let _offlineCatchup = false;
-
-// Rate is sampled (not summed per-event) so that millions of earn events per
-// second don't pile up — fixed-size circular-ish buffer of money snapshots.
-const RATE_WINDOW_SEC = 5;
-const RATE_SAMPLE_HZ = 5;
-const RATE_BUFFER_SIZE = RATE_WINDOW_SEC * RATE_SAMPLE_HZ;
-let _rateBuffer = [];
-let _rateLastSampleAt = 0;
-
-function sampleRate(now) {
-  if (now - _rateLastSampleAt < 1000 / RATE_SAMPLE_HZ) return;
-  _rateLastSampleAt = now;
-  _rateBuffer.push({ t: now, money: state.money });
-  if (_rateBuffer.length > RATE_BUFFER_SIZE) _rateBuffer.shift();
-}
-
-function currentRate() {
-  if (_rateBuffer.length < 2) return 0;
-  const first = _rateBuffer[0];
-  const last = _rateBuffer[_rateBuffer.length - 1];
-  const dt = (last.t - first.t) / 1000;
-  if (dt <= 0) return 0;
-  return Math.max(0, (last.money - first.money) / dt);
-}
-
-function resetRateBuffer() {
-  _rateBuffer = [];
-  _rateLastSampleAt = 0;
-}
-
-// ---------- MANUAL CLICK HANDLERS ----------
+// ---------- MANUAL CLICKS ----------
 const POW_WORDS = ['WHACK!', 'BAM!', 'POW!', 'CLANG!', 'CRACK!', 'SMASH!', 'KAPOW!', 'BOOM!'];
 function pickWord() { return POW_WORDS[Math.floor(Math.random() * POW_WORDS.length)]; }
 
-function clickShaft(i) {
-  const s = state.shafts[i];
+function clickShaft(k) {
+  const z = state.currentZone;
+  const s = state.zones[z].shafts[k];
   if (!s.unlocked || s.autoMine) return;
-  const cap = shaftOreCap(i);
+  const cap = shaftOreCap(z, k);
   if (s.ore >= cap) return;
-  const yieldAmt = shaftYieldPerCycle(i);
-  s.ore = Math.min(cap, s.ore + yieldAmt);
-  spawnPow(refs.shafts[i].el, pickWord());
-  pulseClick(refs.shafts[i].el);
+  s.ore = Math.min(cap, s.ore + shaftYieldPerCycle(z, k));
+  spawnPow(refs.shafts[k].el, pickWord());
+  pulseClick(refs.shafts[k].el);
 }
-
 function clickElevator() {
-  const ev = state.elevator;
+  const ev = state.zones[state.currentZone].elevator;
   if (ev.auto) return;
   ev.manualTrip = true;
   pulseClick($('elevator'));
 }
-
 function clickWorker() {
-  const w = state.worker;
+  const w = state.zones[state.currentZone].worker;
   if (w.auto) return;
   w.manualTrip = true;
   pulseClick($('worker'));
 }
-
 function clickProcessor() {
-  const p = state.processor;
+  const z = state.currentZone;
+  const p = state.zones[z].processor;
   if (p.auto) return;
   if (p.buffer <= 0) return;
-  // process the entire buffer instantly for snappier early play
-  const count = p.buffer;
-  const each = processorValue();
-  const total = count * each;
+  const total = p.buffer * processorValue(z);
   p.buffer = 0;
   p.progress = 0;
   state.money += total;
@@ -392,22 +375,20 @@ function clickProcessor() {
 function $(id) { return document.getElementById(id); }
 
 function spawnPow(targetEl, text) {
+  if (_offlineCatchup) return;
   const fx = $('fx');
   const el = document.createElement('div');
   el.className = 'fx-pow';
   el.textContent = text;
   const r = targetEl.getBoundingClientRect();
   const root = fx.getBoundingClientRect();
-  const x = r.left - root.left + r.width * (0.3 + Math.random() * 0.4);
-  const y = r.top - root.top + r.height * (0.2 + Math.random() * 0.3);
-  el.style.left = x + 'px';
-  el.style.top = y + 'px';
+  el.style.left = (r.left - root.left + r.width * (0.3 + Math.random() * 0.4)) + 'px';
+  el.style.top  = (r.top  - root.top  + r.height * (0.2 + Math.random() * 0.3)) + 'px';
   el.style.setProperty('--rot', (-15 + Math.random() * 30).toFixed(1) + 'deg');
   fx.appendChild(el);
   setTimeout(() => el.remove(), 700);
 }
 
-// Coalesce money fx — collect totals, emit at most one floating number per ~250ms
 let _moneyAccum = 0;
 let _moneyLastFxAt = 0;
 function spawnMoney(amount) {
@@ -426,7 +407,7 @@ function spawnMoney(amount) {
   const r = proc.getBoundingClientRect();
   const root = fx.getBoundingClientRect();
   el.style.left = (r.left - root.left + r.width / 2 + (Math.random() * 20 - 10)) + 'px';
-  el.style.top = (r.top - root.top + 10) + 'px';
+  el.style.top  = (r.top  - root.top  + 10) + 'px';
   fx.appendChild(el);
   setTimeout(() => el.remove(), 1200);
 }
@@ -435,20 +416,15 @@ function spawnOreTransfer(fromEl, toEl, amount) {
   if (_offlineCatchup) return;
   if (!fromEl || !toEl) return;
   const fx = $('fx');
-  // cap concurrent fx particles to avoid DOM explosion at high throughput
   if (fx.children.length > 30) {
-    if (toEl) {
-      toEl.classList.remove('cargo-pulse');
-      void toEl.offsetWidth;
-      toEl.classList.add('cargo-pulse');
-    }
+    if (toEl) { toEl.classList.remove('cargo-pulse'); void toEl.offsetWidth; toEl.classList.add('cargo-pulse'); }
     return;
   }
   const fromR = fromEl.getBoundingClientRect();
-  const toR = toEl.getBoundingClientRect();
-  const root = fx.getBoundingClientRect();
+  const toR   = toEl.getBoundingClientRect();
+  const root  = fx.getBoundingClientRect();
   const count = Math.min(6, Math.max(2, Math.floor(amount / 2)));
-  for (let k = 0; k < count; k++) {
+  for (let kk = 0; kk < count; kk++) {
     const el = document.createElement('div');
     el.className = 'fx-ore';
     const startX = fromR.left - root.left + fromR.width / 2 + (Math.random() * 18 - 9);
@@ -459,9 +435,9 @@ function spawnOreTransfer(fromEl, toEl, amount) {
     el.style.top  = startY + 'px';
     el.style.setProperty('--dx', (endX - startX) + 'px');
     el.style.setProperty('--dy', (endY - startY) + 'px');
-    el.style.animationDelay = (k * 0.06) + 's';
+    el.style.animationDelay = (kk * 0.06) + 's';
     fx.appendChild(el);
-    setTimeout(() => el.remove(), 900 + k * 60);
+    setTimeout(() => el.remove(), 900 + kk * 60);
   }
   toEl.classList.remove('cargo-pulse');
   void toEl.offsetWidth;
@@ -478,185 +454,201 @@ function spawnPuff(target, where) {
   const r = targetEl.getBoundingClientRect();
   const root = fx.getBoundingClientRect();
   el.style.left = (r.left - root.left + r.width / 2) + 'px';
-  el.style.top = (r.top - root.top + (where === 'top' ? 0 : r.height)) + 'px';
+  el.style.top  = (r.top  - root.top  + (where === 'top' ? 0 : r.height)) + 'px';
   fx.appendChild(el);
   setTimeout(() => el.remove(), 600);
 }
 
 function pulseClick(el) {
   el.classList.remove('click-pulse');
-  void el.offsetWidth; // restart anim
+  void el.offsetWidth;
   el.classList.add('click-pulse');
 }
 
 // ---------- DOM REFS ----------
-const refs = { shafts: [], upgrades: {} };
+const refs = { shafts: [], upgrades: {}, tabs: [] };
 
-// ---------- BUILD SHAFTS DOM ----------
+// ---------- BUILD TABS ----------
+function buildTabs() {
+  const root = $('zone-tabs');
+  root.innerHTML = '';
+  refs.tabs = new Array(ZONE_DEFS.length).fill(null);
+  for (let z = 0; z < ZONE_DEFS.length; z++) {
+    const def = ZONE_DEFS[z];
+    const unlocked = state.zonesUnlocked[z];
+    const tab = document.createElement('button');
+    tab.className = 'zone-tab';
+    tab.dataset.zone = def.id;
+    if (z === state.currentZone) tab.classList.add('active');
+    if (!unlocked) tab.classList.add('locked');
+    let html = `<span class="zt-icon">${def.icon}</span><span class="zt-name">${def.name}</span>`;
+    if (!unlocked) html += `<span class="zt-cost">$${fmt(def.unlockCost)}</span>`;
+    else html += `<span class="zt-rate" id="zt-rate-${z}">·</span>`;
+    tab.innerHTML = html;
+    tab.addEventListener('click', () => {
+      if (!state.zonesUnlocked[z]) tryUnlockZone(z);
+      else switchZone(z);
+    });
+    root.appendChild(tab);
+    refs.tabs[z] = { el: tab, rate: tab.querySelector(`#zt-rate-${z}`) };
+  }
+}
+
+function switchZone(z) {
+  if (!state.zonesUnlocked[z]) return;
+  state.currentZone = z;
+  $('scene-bg').dataset.zone = ZONE_DEFS[z].id;
+  buildShafts();
+  buildUpgradesPanel();
+  buildTabs();
+  saveSoon();
+}
+
+function tryUnlockZone(z) {
+  const def = ZONE_DEFS[z];
+  if (state.money < def.unlockCost) return;
+  state.money -= def.unlockCost;
+  state.zonesUnlocked[z] = true;
+  buildTabs();
+  switchZone(z);
+}
+
+// ---------- BUILD SHAFTS DOM (for current zone) ----------
+function getVisibleShaftRows() {
+  const z = state.currentZone;
+  const shafts = state.zones[z].shafts;
+  const rows = [];
+  for (let k = 0; k < shafts.length; k++) {
+    rows.push(k);
+    if (!shafts[k].unlocked) break;
+  }
+  return rows;
+}
+
 function buildShafts() {
+  const z = state.currentZone;
   const root = $('shafts');
   root.innerHTML = '';
-  refs.shafts = new Array(SHAFT_DEFS.length).fill(null);
-  refs.barriers = new Array(BARRIER_DEFS.length).fill(null);
-  refs.rowYs = [];
+  refs.shafts = new Array(state.zones[z].shafts.length).fill(null);
 
-  const rows = getVisibleRows();
+  const rows = getVisibleShaftRows();
   for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
-    if (row.type === 'shaft') {
-      const i = row.idx;
-      const s = state.shafts[i];
-      const def = SHAFT_DEFS[i];
-      const el = document.createElement('div');
-      el.className = 'shaft' + (s.unlocked ? '' : ' locked');
-      el.dataset.shaft = i;
-      el.dataset.zone = zoneOfShaft(i).id;
-      el.innerHTML = `
-        <div class="shaft-tunnel">
-          <div class="miners"></div>
-          <div class="mine-progress"><div class="mine-progress-fill"></div></div>
-          <div class="ore-pile">0</div>
-          <div class="locked-overlay">🔒 Unlock ${def.name} — $${fmt(def.unlockCost)}</div>
-        </div>
-        <div class="shaft-label">${def.name}</div>
-      `;
-      root.appendChild(el);
-      const tunnel = el.querySelector('.shaft-tunnel');
-      refs.shafts[i] = {
-        el, tunnel, rowIndex: r,
-        miners: el.querySelector('.miners'),
-        bar: el.querySelector('.mine-progress-fill'),
-        ore: el.querySelector('.ore-pile'),
-        lock: el.querySelector('.locked-overlay'),
-        lastMinerLevel: -1,
-      };
-      if (s.unlocked) {
-        tunnel.addEventListener('click', () => clickShaft(i));
-      } else {
-        refs.shafts[i].lock.addEventListener('click', () => tryUnlockShaft(i));
-      }
+    const k = rows[r];
+    const s = state.zones[z].shafts[k];
+    const def = SHAFT_DEFS[gIdx(z, k)];
+    const el = document.createElement('div');
+    el.className = 'shaft' + (s.unlocked ? '' : ' locked');
+    el.dataset.shaft = k;
+    el.dataset.zone = ZONE_DEFS[z].id;
+    el.innerHTML = `
+      <div class="shaft-tunnel">
+        <div class="miners"></div>
+        <div class="mine-progress"><div class="mine-progress-fill"></div></div>
+        <div class="ore-pile">0</div>
+        <div class="locked-overlay">🔒 Unlock ${def.name} — $${fmt(def.unlockCost)}</div>
+      </div>
+      <div class="shaft-label">${def.name}</div>
+    `;
+    root.appendChild(el);
+    const tunnel = el.querySelector('.shaft-tunnel');
+    refs.shafts[k] = {
+      el, tunnel, rowIndex: r,
+      miners: el.querySelector('.miners'),
+      bar: el.querySelector('.mine-progress-fill'),
+      ore: el.querySelector('.ore-pile'),
+      lock: el.querySelector('.locked-overlay'),
+      lastMinerLevel: -1,
+    };
+    if (s.unlocked) {
+      tunnel.addEventListener('click', () => clickShaft(k));
     } else {
-      const bi = row.idx;
-      const def = BARRIER_DEFS[bi];
-      const el = document.createElement('div');
-      el.className = 'barrier';
-      el.dataset.barrier = bi;
-      // Theme the barrier as the zone it unlocks (the zone of the next shaft)
-      el.dataset.zone = zoneOfShaft(def.afterShaft + 1).id;
-      el.innerHTML = `
-        <div class="barrier-tunnel">
-          <div class="barrier-icon">${def.icon}</div>
-          <div class="barrier-info">
-            <div class="barrier-name">${def.name}</div>
-            <div class="barrier-desc">${def.desc}</div>
-          </div>
-          <div class="barrier-action">Clear — <span class="barrier-cost">$${fmt(def.cost)}</span></div>
-        </div>
-        <div class="shaft-label">Blocked</div>
-      `;
-      root.appendChild(el);
-      const tunnel = el.querySelector('.barrier-tunnel');
-      refs.barriers[bi] = {
-        el, tunnel, rowIndex: r,
-        cost: el.querySelector('.barrier-cost'),
-        action: el.querySelector('.barrier-action'),
-      };
-      tunnel.addEventListener('click', () => tryClearBarrier(bi));
+      refs.shafts[k].lock.addEventListener('click', () => tryUnlockShaft(k));
     }
   }
   updateUndergroundHeight();
+  for (let k = 0; k < refs.shafts.length; k++) {
+    if (refs.shafts[k] && state.zones[z].shafts[k].unlocked) rebuildMiners(k);
+  }
 }
 
 function updateUndergroundHeight() {
-  const rowCount = totalRowCount();
+  const rowCount = getVisibleShaftRows().length;
   const h = 30 + rowCount * 100;
   document.querySelector('.underground').style.minHeight = h + 'px';
 }
 
-function tryClearBarrier(bi) {
-  const def = BARRIER_DEFS[bi];
-  if (state.money < def.cost) return;
-  state.money -= def.cost;
-  state.barriers[bi].cleared = true;
-  const r = refs.barriers[bi];
-  if (r) spawnPow(r.el, 'CLEARED!');
-  buildShafts();
-  buildUpgradesPanel();
-  for (let i = 0; i < refs.shafts.length; i++) {
-    if (refs.shafts[i] && state.shafts[i].unlocked) rebuildMiners(i);
-  }
-  saveSoon();
-}
-
-function tryUnlockShaft(i) {
-  const def = SHAFT_DEFS[i];
+function tryUnlockShaft(k) {
+  const z = state.currentZone;
+  const def = SHAFT_DEFS[gIdx(z, k)];
   if (state.money < def.unlockCost) return;
   state.money -= def.unlockCost;
-  state.shafts[i].unlocked = true;
+  state.zones[z].shafts[k].unlocked = true;
   buildShafts();
   buildUpgradesPanel();
   saveSoon();
 }
 
-// ---------- UPGRADE DEFS ----------
+// ---------- UPGRADES (current zone) ----------
 function getUpgradeDefs() {
+  const z = state.currentZone;
+  const zone = state.zones[z];
   const defs = [];
-  const visible = visibleShaftCount();
-  for (let i = 0; i < visible; i++) {
-    if (!state.shafts[i].unlocked) continue;
-    const idx = i;
-    defs.push({ section: SHAFT_DEFS[i].name });
+
+  for (let k = 0; k < zone.shafts.length; k++) {
+    if (!zone.shafts[k].unlocked) continue;
+    const localK = k;
+    const sdef = SHAFT_DEFS[gIdx(z, k)];
+    defs.push({ section: sdef.name });
     defs.push({
-      id: `shaft${i}_mine`, name: 'Mining Speed',
-      get: () => state.shafts[idx].mineLevel,
-      eff: () => fmtTime(shaftMineTime(idx)) + ' / cycle',
-      cost: () => COSTS.shaftMine(idx),
-      buy: () => state.shafts[idx].mineLevel++,
+      id: `s${k}_mine`, name: 'Mining Speed',
+      get: () => zone.shafts[localK].mineLevel,
+      eff: () => fmtTime(shaftMineTime(z, localK)) + ' / cycle',
+      cost: () => COSTS.shaftMine(z, localK),
+      buy:  () => zone.shafts[localK].mineLevel++,
     });
     defs.push({
-      id: `shaft${i}_cap`, name: 'Shaft Capacity',
-      get: () => state.shafts[idx].capLevel,
-      eff: () => 'cap ' + fmt(shaftOreCap(idx)),
-      cost: () => COSTS.shaftCap(idx),
-      buy: () => state.shafts[idx].capLevel++,
+      id: `s${k}_cap`, name: 'Shaft Capacity',
+      get: () => zone.shafts[localK].capLevel,
+      eff: () => 'cap ' + fmt(shaftOreCap(z, localK)),
+      cost: () => COSTS.shaftCap(z, localK),
+      buy:  () => zone.shafts[localK].capLevel++,
     });
     defs.push({
-      id: `shaft${i}_miner`, name: 'Hire Miner',
-      get: () => state.shafts[idx].minerLevel,
-      eff: () => shaftMinerCount(idx) + ' miners (' + fmt(shaftYieldPerCycle(idx)) + ' ore/cycle)',
-      cost: () => COSTS.shaftMiner(idx),
-      buy: () => { state.shafts[idx].minerLevel++; rebuildMiners(idx); },
+      id: `s${k}_miner`, name: 'Hire Miner',
+      get: () => zone.shafts[localK].minerLevel,
+      eff: () => shaftMinerCount(z, localK) + ' miners (' + fmt(shaftYieldPerCycle(z, localK)) + ' ore/cycle)',
+      cost: () => COSTS.shaftMiner(z, localK),
+      buy:  () => { zone.shafts[localK].minerLevel++; rebuildMiners(localK); },
     });
-    if (!state.shafts[idx].autoMine) {
+    if (!zone.shafts[k].autoMine) {
       defs.push({
-        id: `shaft${i}_foreman`, name: '👷 Hire Foreman',
-        oneShot: true,
+        id: `s${k}_foreman`, name: '👷 Hire Foreman', oneShot: true,
         eff: () => 'Auto-mines this shaft',
-        cost: () => COSTS.shaftForeman(idx),
-        buy: () => { state.shafts[idx].autoMine = true; },
+        cost: () => COSTS.shaftForeman(z, localK),
+        buy:  () => { zone.shafts[localK].autoMine = true; },
       });
     }
   }
 
   defs.push({ section: 'Elevator' });
-  defs.push({ id: 'elev_speed', name: 'Elevator Speed',    get: () => state.elevator.speedLevel, eff: () => fmt(elevatorSpeed()) + ' shafts/s', cost: () => COSTS.elevSpeed(), buy: () => state.elevator.speedLevel++ });
-  defs.push({ id: 'elev_cap',   name: 'Elevator Capacity', get: () => state.elevator.capLevel,   eff: () => 'cap ' + fmt(elevatorCap()),         cost: () => COSTS.elevCap(),   buy: () => state.elevator.capLevel++ });
-  if (!state.elevator.auto) {
-    defs.push({ id: 'elev_auto', name: '🎩 Hire Operator', oneShot: true, eff: () => 'Auto-runs the elevator', cost: () => COSTS.elevAuto(), buy: () => { state.elevator.auto = true; } });
+  defs.push({ id: 'elev_speed', name: 'Elevator Speed', get: () => zone.elevator.speedLevel, eff: () => fmt(elevatorSpeed(z)) + ' shafts/s', cost: () => COSTS.elevSpeed(z), buy: () => zone.elevator.speedLevel++ });
+  defs.push({ id: 'elev_cap',   name: 'Elevator Capacity', get: () => zone.elevator.capLevel, eff: () => 'cap ' + fmt(elevatorCap(z)), cost: () => COSTS.elevCap(z), buy: () => zone.elevator.capLevel++ });
+  if (!zone.elevator.auto) {
+    defs.push({ id: 'elev_auto', name: '🎩 Hire Operator', oneShot: true, eff: () => 'Auto-runs the elevator', cost: () => COSTS.elevAuto(z), buy: () => { zone.elevator.auto = true; } });
   }
 
   defs.push({ section: 'Surface Worker' });
-  defs.push({ id: 'worker_speed', name: 'Worker Speed',    get: () => state.worker.speedLevel, eff: () => fmt(workerSpeed()) + ' /s',     cost: () => COSTS.workerSpeed(), buy: () => state.worker.speedLevel++ });
-  defs.push({ id: 'worker_cap',   name: 'Worker Capacity', get: () => state.worker.capLevel,   eff: () => 'cap ' + fmt(workerCap()),       cost: () => COSTS.workerCap(),   buy: () => state.worker.capLevel++ });
-  if (!state.worker.auto) {
-    defs.push({ id: 'worker_auto', name: '👷 Hire Hauler', oneShot: true, eff: () => 'Auto-hauls ore to the processor', cost: () => COSTS.workerAuto(), buy: () => { state.worker.auto = true; } });
+  defs.push({ id: 'worker_speed', name: 'Worker Speed', get: () => zone.worker.speedLevel, eff: () => fmt(workerSpeed(z)) + ' /s', cost: () => COSTS.workerSpeed(z), buy: () => zone.worker.speedLevel++ });
+  defs.push({ id: 'worker_cap',   name: 'Worker Capacity', get: () => zone.worker.capLevel, eff: () => 'cap ' + fmt(workerCap(z)), cost: () => COSTS.workerCap(z), buy: () => zone.worker.capLevel++ });
+  if (!zone.worker.auto) {
+    defs.push({ id: 'worker_auto', name: '👷 Hire Hauler', oneShot: true, eff: () => 'Auto-hauls ore to the processor', cost: () => COSTS.workerAuto(z), buy: () => { zone.worker.auto = true; } });
   }
 
   defs.push({ section: 'Processor' });
-  defs.push({ id: 'proc_speed', name: 'Processing Speed', get: () => state.processor.speedLevel, eff: () => fmtTime(processorTime()) + ' / ore',     cost: () => COSTS.procSpeed(), buy: () => state.processor.speedLevel++ });
-  defs.push({ id: 'proc_value', name: 'Ore Value',        get: () => state.processor.valueLevel, eff: () => '$' + fmt(processorValue()) + ' / ore',  cost: () => COSTS.procValue(), buy: () => state.processor.valueLevel++ });
-  if (!state.processor.auto) {
-    defs.push({ id: 'proc_auto', name: '🤖 Hire Operator', oneShot: true, eff: () => 'Auto-processes ore', cost: () => COSTS.procAuto(), buy: () => { state.processor.auto = true; } });
+  defs.push({ id: 'proc_speed', name: 'Processing Speed', get: () => zone.processor.speedLevel, eff: () => fmtTime(processorTime(z)) + ' / ore', cost: () => COSTS.procSpeed(z), buy: () => zone.processor.speedLevel++ });
+  defs.push({ id: 'proc_value', name: 'Ore Value',        get: () => zone.processor.valueLevel, eff: () => '$' + fmt(processorValue(z)) + ' / ore', cost: () => COSTS.procValue(z), buy: () => zone.processor.valueLevel++ });
+  if (!zone.processor.auto) {
+    defs.push({ id: 'proc_auto', name: '🤖 Hire Operator', oneShot: true, eff: () => 'Auto-processes ore', cost: () => COSTS.procAuto(z), buy: () => { zone.processor.auto = true; } });
   }
 
   return defs;
@@ -686,8 +678,8 @@ function buildUpgradesPanel() {
     root.appendChild(el);
     refs.upgrades[def.id] = {
       el,
-      lv: el.querySelector('.upgrade-lv'),
-      eff: el.querySelector('.upgrade-effect'),
+      lv:   el.querySelector('.upgrade-lv'),
+      eff:  el.querySelector('.upgrade-effect'),
       cost: el.querySelector('.upgrade-cost'),
       def,
     };
@@ -761,19 +753,19 @@ function haulerSVG() {
   </svg>`;
 }
 
-// ---------- MINER RENDERING ----------
-function rebuildMiners(i) {
-  const r = refs.shafts[i];
+function rebuildMiners(k) {
+  const r = refs.shafts[k];
   if (!r) return;
-  const count = shaftMinerCount(i);
+  const z = state.currentZone;
+  const count = shaftMinerCount(z, k);
   const visible = Math.min(5, count);
   let html = '';
-  for (let k = 0; k < visible; k++) {
-    html += `<div class="miner-slot" style="animation-delay: ${(k * 0.12).toFixed(2)}s">${minerSVG()}</div>`;
+  for (let kk = 0; kk < visible; kk++) {
+    html += `<div class="miner-slot" style="animation-delay: ${(kk * 0.12).toFixed(2)}s">${minerSVG()}</div>`;
   }
   if (count > 5) html += `<div class="miner-extra">×${count}</div>`;
   r.miners.innerHTML = html;
-  r.lastMinerLevel = state.shafts[i].minerLevel;
+  r.lastMinerLevel = state.zones[z].shafts[k].minerLevel;
 }
 
 // ---------- RENDER ----------
@@ -790,41 +782,52 @@ function render() {
   setText($('money'), fmt(state.money));
   setText($('rate'), '$' + fmt(currentRate()));
 
-  const visible = visibleShaftCount();
+  const z = state.currentZone;
+  const zone = state.zones[z];
 
-  for (let i = 0; i < refs.shafts.length; i++) {
-    const r = refs.shafts[i];
+  // tabs — affordability cue + active state
+  for (let zz = 0; zz < ZONE_DEFS.length; zz++) {
+    const t = refs.tabs[zz];
+    if (!t) continue;
+    t.el.classList.toggle('active', zz === z);
+    if (!state.zonesUnlocked[zz]) {
+      t.el.classList.toggle('afford', state.money >= ZONE_DEFS[zz].unlockCost);
+    }
+  }
+
+  for (let k = 0; k < refs.shafts.length; k++) {
+    const r = refs.shafts[k];
     if (!r) continue;
-    const s = state.shafts[i];
+    const s = zone.shafts[k];
     if (s.unlocked) {
       r.el.classList.remove('locked');
-      setText(r.ore, fmt(s.ore) + '/' + fmt(shaftOreCap(i)));
-      setStyle(r.bar, 'width', Math.min(100, (s.progress / shaftMineTime(i)) * 100) + '%');
-      const mining = s.ore < shaftOreCap(i);
+      setText(r.ore, fmt(s.ore) + '/' + fmt(shaftOreCap(z, k)));
+      setStyle(r.bar, 'width', Math.min(100, (s.progress / shaftMineTime(z, k)) * 100) + '%');
+      const mining = s.ore < shaftOreCap(z, k);
       r.el.classList.toggle('mining', mining && s.autoMine);
       r.el.classList.toggle('manual', !s.autoMine);
-      r.el.classList.toggle('full', s.ore >= shaftOreCap(i));
-      if (r.lastMinerLevel !== s.minerLevel) rebuildMiners(i);
+      r.el.classList.toggle('full', s.ore >= shaftOreCap(z, k));
+      if (r.lastMinerLevel !== s.minerLevel) rebuildMiners(k);
     } else {
       r.el.classList.add('locked');
-      const def = SHAFT_DEFS[i];
+      const def = SHAFT_DEFS[gIdx(z, k)];
       const afford = state.money >= def.unlockCost;
       setText(r.lock, (afford ? '⛏ ' : '🔒 ') + 'Unlock ' + def.name + ' — $' + fmt(def.unlockCost));
       r.lock.classList.toggle('afford', afford);
     }
   }
 
-  // elevator pos — uses each shaft's actual row index (barriers occupy rows too)
+  // elevator y-position from row indices
   const positions = [10];
-  for (let i = 0; i < refs.shafts.length; i++) {
-    const r = refs.shafts[i];
+  for (let k = 0; k < refs.shafts.length; k++) {
+    const r = refs.shafts[k];
     if (r) positions.push(10 + 30 + r.rowIndex * 100 + 50);
-    else positions.push(positions[positions.length - 1]); // unrendered shafts: park at last
+    else positions.push(positions[positions.length - 1]);
   }
-  const ev = state.elevator;
+  const ev = zone.elevator;
   const evY = lerp(positions, ev.pos);
   setStyle($('elevator'), 'top', evY + 'px');
-  const evCap = elevatorCap();
+  const evCap = elevatorCap(z);
   setText($('elev-cargo'), fmt(ev.cargo) + '/' + fmt(evCap));
   setStyle($('elev-cargo'), 'opacity', ev.cargo > 0 ? '1' : '0.55');
   const fillPct = evCap > 0 ? Math.min(100, (ev.cargo / evCap) * 100) : 0;
@@ -834,7 +837,7 @@ function render() {
   $('elevator').classList.toggle('idle', ev.stateName === 'idle');
 
   // worker
-  const w = state.worker;
+  const w = zone.worker;
   const walkPct = w.pos * 100;
   setStyle($('worker'), 'left', walkPct + '%');
   setStyle($('worker'), 'transform', `translateX(-${walkPct}%)`);
@@ -845,14 +848,14 @@ function render() {
   workerEl.classList.toggle('manual', !w.auto);
 
   // dropoff & processor
-  setText($('dropoff-count'), fmt(state.surfaceDropoff));
-  const p = state.processor;
+  setText($('dropoff-count'), fmt(zone.surfaceDropoff));
+  const p = zone.processor;
   setText($('proc-buffer'), fmt(p.buffer) + ' ore');
-  setStyle($('proc-bar'), 'width', (Math.min(1, p.progress / processorTime()) * 100) + '%');
+  setStyle($('proc-bar'), 'width', (Math.min(1, p.progress / processorTime(z)) * 100) + '%');
   $('processor').classList.toggle('idle', p.buffer === 0);
   $('processor').classList.toggle('manual', !p.auto);
 
-  // upgrades — text uses setText for cache; classList.toggle is already a no-op when unchanged
+  // upgrades
   for (const id in refs.upgrades) {
     const u = refs.upgrades[id];
     setText(u.lv, u.def.get ? 'Lv ' + u.def.get() : '');
@@ -864,15 +867,12 @@ function render() {
     u.el.classList.toggle('affordable', afford);
   }
 
-  // detect when render layout (rows) needs rebuilding
-  const expectedRows = totalRowCount();
+  // detect when scene needs full rebuild (a new shaft became unlocked)
+  const expectedRows = getVisibleShaftRows().length;
   const renderedRows = $('shafts').children.length;
   if (renderedRows !== expectedRows) {
     buildShafts();
     buildUpgradesPanel();
-    for (let i = 0; i < refs.shafts.length; i++) {
-      if (refs.shafts[i] && state.shafts[i].unlocked) rebuildMiners(i);
-    }
   }
 }
 
@@ -891,24 +891,80 @@ function saveSoon() {
 }
 function saveNow() {
   state.lastTimestamp = Date.now();
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-  } catch (e) { /* quota */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch (e) { /* quota */ }
 }
+
+// Map a legacy save (single-mine state.shafts/elevator/...) into the new
+// per-zone shape. Idempotent: returns data unchanged if already migrated.
+function migrateLegacy(data) {
+  if (data && data.zones) return data;
+  const out = { ...data };
+  const oldShafts = data.shafts || [];
+  const oldBarriers = data.barriers || [];
+  const oldElev   = data.elevator;
+  const oldWorker = data.worker;
+  const oldProc   = data.processor;
+  const oldDrop   = data.surfaceDropoff || 0;
+
+  // Sequential barriers: stop at first uncleared, since they gate progression.
+  const activeZones = new Set([0]);
+  for (let b = 0; b < oldBarriers.length; b++) {
+    if (oldBarriers[b].cleared) activeZones.add(b + 1);
+    else break;
+  }
+
+  out.zones = ZONE_DEFS.map((def, z) => {
+    const zoneShafts = [];
+    for (let k = 0; k < def.shaftCount; k++) {
+      const gi = def.firstShaft + k;
+      zoneShafts.push(oldShafts[gi] || (k === 0 ? { ...freshShaft(), unlocked: activeZones.has(z) } : freshShaft()));
+    }
+    if (z === 0 && k_oldHasPipeline(data)) {
+      return {
+        shafts: zoneShafts,
+        elevator: oldElev ? { ...oldElev, cargo: 0, pos: 0, target: 0, stateName: 'idle', timer: 0, manualTrip: false } : freshElevator(),
+        worker:   oldWorker ? { ...oldWorker, cargo: 0, pos: 0, target: 0, stateName: 'idle', timer: 0, manualTrip: false } : freshWorker(),
+        processor: oldProc ? { ...oldProc, buffer: 0, progress: 0 } : freshProcessor(),
+        surfaceDropoff: oldDrop,
+      };
+    }
+    if (activeZones.has(z) && k_oldHasPipeline(data)) {
+      // Carry zone-0's pipeline upgrades forward to zones the player had
+      // already reached, so they don't lose progress in the migration.
+      return {
+        shafts: zoneShafts,
+        elevator: oldElev ? { ...freshElevator(), speedLevel: oldElev.speedLevel, capLevel: oldElev.capLevel, auto: oldElev.auto } : freshElevator(),
+        worker:   oldWorker ? { ...freshWorker(), speedLevel: oldWorker.speedLevel, capLevel: oldWorker.capLevel, auto: oldWorker.auto } : freshWorker(),
+        processor: oldProc ? { ...freshProcessor(), speedLevel: oldProc.speedLevel, valueLevel: oldProc.valueLevel, auto: oldProc.auto } : freshProcessor(),
+        surfaceDropoff: 0,
+      };
+    }
+    return freshZone(z);
+  });
+
+  out.zonesUnlocked = ZONE_DEFS.map((_, z) => activeZones.has(z));
+  out.currentZone = 0;
+
+  delete out.shafts; delete out.barriers; delete out.elevator;
+  delete out.worker; delete out.processor; delete out.surfaceDropoff;
+  delete out.earnedRecent;
+  return out;
+}
+function k_oldHasPipeline(data) { return data && (data.elevator || data.worker || data.processor); }
+
 function load() {
-  const raw = localStorage.getItem(SAVE_KEY);
+  const raw = localStorage.getItem(SAVE_KEY) ||
+              localStorage.getItem('idleminer_save_v4'); // pick up the previous key if user has one
   if (!raw) return false;
   try {
-    const data = JSON.parse(raw);
-    delete data.earnedRecent; // legacy field — drop it
+    let data = JSON.parse(raw);
+    data = migrateLegacy(data);
     state = Object.assign(freshState(), data);
-    while (state.shafts.length < SHAFT_DEFS.length) {
-      state.shafts.push({ unlocked: false, mineLevel: 1, capLevel: 1, minerLevel: 1, autoMine: false, ore: 0, progress: 0 });
-    }
-    if (!state.barriers) state.barriers = BARRIER_DEFS.map(() => ({ cleared: false }));
-    while (state.barriers.length < BARRIER_DEFS.length) state.barriers.push({ cleared: false });
+    // pad zones array if ZONE_DEFS changed
+    while (state.zones.length < ZONE_DEFS.length) state.zones.push(freshZone(state.zones.length));
+    while (state.zonesUnlocked.length < ZONE_DEFS.length) state.zonesUnlocked.push(false);
     return true;
-  } catch (e) { return false; }
+  } catch (e) { console.warn('save load failed:', e); return false; }
 }
 
 function applyOfflineProgress() {
@@ -916,8 +972,6 @@ function applyOfflineProgress() {
   const elapsedSec = Math.min(elapsedMs / 1000, OFFLINE_CAP_SEC);
   if (elapsedSec < 5) return 0;
   const moneyBefore = state.money;
-  // Larger step for offline so long absences (4h cap) don't freeze the page;
-  // worker/elevator state machines tolerate dt up to a few seconds fine.
   const step = 0.5;
   let remaining = elapsedSec;
   _offlineCatchup = true;
@@ -928,6 +982,39 @@ function applyOfflineProgress() {
   _offlineCatchup = false;
   resetRateBuffer();
   return state.money - moneyBefore;
+}
+
+// ---------- IMPORT/EXPORT ----------
+function exportSaveString() {
+  saveNow();
+  const json = JSON.stringify(state);
+  // unicode-safe base64
+  const bin = unescape(encodeURIComponent(json));
+  return btoa(bin);
+}
+function importSaveString(input) {
+  try {
+    const cleaned = (input || '').trim();
+    if (!cleaned) return false;
+    const bin = atob(cleaned);
+    const json = decodeURIComponent(escape(bin));
+    let data = JSON.parse(json);
+    data = migrateLegacy(data);
+    state = Object.assign(freshState(), data);
+    while (state.zones.length < ZONE_DEFS.length) state.zones.push(freshZone(state.zones.length));
+    while (state.zonesUnlocked.length < ZONE_DEFS.length) state.zonesUnlocked.push(false);
+    saveNow();
+    rebuildAll();
+    return true;
+  } catch (e) { console.warn('import failed:', e); return false; }
+}
+
+function rebuildAll() {
+  buildTabs();
+  buildShafts();
+  buildUpgradesPanel();
+  $('scene-bg').dataset.zone = ZONE_DEFS[state.currentZone].id;
+  resetRateBuffer();
 }
 
 // ---------- LOOP ----------
@@ -944,10 +1031,9 @@ function frame(now) {
 // ---------- INIT ----------
 function init() {
   const had = load();
+  $('scene-bg').dataset.zone = ZONE_DEFS[state.currentZone].id;
+  buildTabs();
   buildShafts();
-  for (let i = 0; i < refs.shafts.length; i++) {
-    if (refs.shafts[i] && state.shafts[i].unlocked) rebuildMiners(i);
-  }
   buildUpgradesPanel();
 
   if (had) {
@@ -962,13 +1048,43 @@ function init() {
 
   $('offline-close').addEventListener('click', () => $('offline-modal').classList.add('hidden'));
 
-  $('reset').addEventListener('click', () => {
-    if (confirm('Wipe save and start over?')) {
-      localStorage.removeItem(SAVE_KEY);
-      state = freshState();
-      buildShafts();
-      buildUpgradesPanel();
+  // settings modal
+  $('settings-btn').addEventListener('click', () => $('settings-modal').classList.remove('hidden'));
+  $('settings-close').addEventListener('click', () => $('settings-modal').classList.add('hidden'));
+
+  $('export-btn').addEventListener('click', () => {
+    const s = exportSaveString();
+    $('save-textarea').value = s;
+    $('save-textarea').select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(s).then(() => {
+        flashStatus('Save copied to clipboard');
+      }, () => flashStatus('Save shown — copy manually'));
+    } else {
+      flashStatus('Save shown — copy manually');
     }
+  });
+
+  $('import-btn').addEventListener('click', () => {
+    const txt = $('save-textarea').value;
+    if (!txt.trim()) { flashStatus('Paste a save first'); return; }
+    if (!confirm('Replace current save with imported data? Your current progress will be lost.')) return;
+    if (importSaveString(txt)) {
+      flashStatus('Save imported');
+      $('settings-modal').classList.add('hidden');
+    } else {
+      flashStatus('Import failed — invalid save');
+    }
+  });
+
+  $('reset-btn-modal').addEventListener('click', () => {
+    if (!confirm('Wipe save and start over?')) return;
+    localStorage.removeItem(SAVE_KEY);
+    localStorage.removeItem('idleminer_save_v4');
+    state = freshState();
+    rebuildAll();
+    flashStatus('Reset');
+    $('settings-modal').classList.add('hidden');
   });
 
   $('worker-body').innerHTML = haulerSVG();
@@ -982,6 +1098,15 @@ function init() {
 
   lastFrame = performance.now();
   requestAnimationFrame(frame);
+}
+
+function flashStatus(msg) {
+  const el = $('settings-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
 }
 
 init();
