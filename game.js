@@ -197,23 +197,28 @@ function tick(dt) {
 
 function tickZone(z, dt) {
   const zone = state.zones[z];
-  // mining — closed-form math so very fast shafts (small t, large yield)
-  // don't spin a per-cycle loop. Compute the number of cycles that fit in
-  // accumulated progress, clamp to capacity, then advance state in one shot.
+  // mining — progress accumulates for both auto and manual shafts so the
+  // visible cycle bar fills naturally. Auto drains progress into ore via
+  // closed-form math; manual caps progress at one cycle and waits for a
+  // click to yield, so spamming clicks can't bypass mineTime.
   for (let k = 0; k < zone.shafts.length; k++) {
     const s = zone.shafts[k];
-    if (!s.unlocked || !s.autoMine) continue;
+    if (!s.unlocked) continue;
     const cap = shaftOreCap(z, k);
     if (s.ore >= cap) { s.progress = 0; continue; }
     s.progress += dt;
     const t = shaftMineTime(z, k);
-    if (s.progress >= t) {
-      const yld = shaftYieldPerCycle(z, k);
-      const slots = Math.floor(s.progress / t);
-      const slotsNeeded = Math.ceil((cap - s.ore) / yld);
-      const used = Math.min(slots, slotsNeeded);
-      s.progress -= used * t;
-      s.ore = Math.min(cap, s.ore + used * yld);
+    if (s.autoMine) {
+      if (s.progress >= t) {
+        const yld = shaftYieldPerCycle(z, k);
+        const slots = Math.floor(s.progress / t);
+        const slotsNeeded = Math.ceil((cap - s.ore) / yld);
+        const used = Math.min(slots, slotsNeeded);
+        s.progress -= used * t;
+        s.ore = Math.min(cap, s.ore + used * yld);
+      }
+    } else if (s.progress > t) {
+      s.progress = t;
     }
     if (s.ore >= cap) s.progress = 0;
   }
@@ -300,26 +305,29 @@ function tickZone(z, dt) {
     }
   }
 
-  // processor — closed-form: process up to (progress / t) ores, clamped by buffer.
+  // processor — same auto/manual split as shafts. Progress accumulates so the
+  // cycle bar fills visibly; auto drains it into ore, manual caps at one cycle.
   const p = zone.processor;
-  if (p.auto && p.buffer > 0) {
+  if (p.buffer > 0) {
     p.progress += dt;
     const t = processorTime(z);
-    if (p.progress >= t) {
-      const slots = Math.floor(p.progress / t);
-      const ores = Math.min(slots, p.buffer);
-      if (ores > 0) {
-        p.progress -= ores * t;
-        p.buffer -= ores;
-        const earned = ores * processorValue(z);
-        state.money += earned;
-        if (z === state.currentZone) spawnMoney(earned);
+    if (p.auto) {
+      if (p.progress >= t) {
+        const slots = Math.floor(p.progress / t);
+        const ores = Math.min(slots, p.buffer);
+        if (ores > 0) {
+          p.progress -= ores * t;
+          p.buffer -= ores;
+          const earned = ores * processorValue(z);
+          state.money += earned;
+          if (z === state.currentZone) spawnMoney(earned);
+        }
       }
+    } else if (p.progress > t) {
+      p.progress = t;
     }
-    if (p.buffer <= 0) p.progress = 0;
-  } else if (p.buffer <= 0) {
-    p.progress = 0;
   }
+  if (p.buffer <= 0) p.progress = 0;
 }
 
 function bestShaftWithOre(z) {
@@ -342,9 +350,14 @@ function clickShaft(k) {
   if (!s.unlocked || s.autoMine) return;
   const cap = shaftOreCap(z, k);
   if (s.ore >= cap) return;
+  pulseClick(refs.shafts[k].el);
+  // The cycle bar must be full before a click yields ore — clicking faster
+  // than mineTime simply animates with no payout.
+  const t = shaftMineTime(z, k);
+  if (s.progress < t) return;
+  s.progress = 0;
   s.ore = Math.min(cap, s.ore + shaftYieldPerCycle(z, k));
   spawnPow(refs.shafts[k].el, pickWord());
-  pulseClick(refs.shafts[k].el);
 }
 function clickElevator() {
   const ev = state.zones[state.currentZone].elevator;
@@ -363,12 +376,14 @@ function clickProcessor() {
   const p = state.zones[z].processor;
   if (p.auto) return;
   if (p.buffer <= 0) return;
-  const total = p.buffer * processorValue(z);
-  p.buffer = 0;
-  p.progress = 0;
-  state.money += total;
-  spawnMoney(total);
   pulseClick($('processor'));
+  const t = processorTime(z);
+  if (p.progress < t) return; // cycle bar must be full
+  p.progress = 0;
+  p.buffer -= 1;
+  const earned = processorValue(z);
+  state.money += earned;
+  spawnMoney(earned);
 }
 
 // ---------- COMIC FX ----------
