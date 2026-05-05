@@ -4,49 +4,94 @@ const SAVE_KEY = 'idleminer_save_v5';
 const OFFLINE_CAP_SEC = 4 * 60 * 60;
 
 // ---------- ZONES ----------
-// Each zone is a self-contained mine with its own shafts, elevator, worker
-// and processor. Money is shared across zones; production runs in parallel.
+// Each zone is a self-contained mine of 8 shafts, split by a mid-barrier
+// between local 3 and 4. All zones tick concurrently; money is shared.
 const ZONE_DEFS = [
-  { id: 'surface', name: 'Surface Mine',  icon: '⛏', firstShaft: 0,  shaftCount: 4, unlockCost: 0      },
-  { id: 'deep',    name: 'Deep Earth',    icon: '🦴', firstShaft: 4,  shaftCount: 4, unlockCost: 5.0e6  },
-  { id: 'forge',   name: 'Hellforge',     icon: '🌋', firstShaft: 8,  shaftCount: 4, unlockCost: 2.0e13 },
-  { id: 'magma',   name: 'Magma Layer',   icon: '🔥', firstShaft: 12, shaftCount: 4, unlockCost: 5.0e20 },
-  { id: 'ice',     name: 'Glacial Reach', icon: '❄',  firstShaft: 16, shaftCount: 4, unlockCost: 1.0e26 },
-  { id: 'cosmic',  name: 'Cosmic Verge',  icon: '✦',  firstShaft: 20, shaftCount: 4, unlockCost: 5.0e33 },
+  { id: 'surface', name: 'Surface Mine',  icon: '⛏', firstShaft: 0,  shaftCount: 8, unlockCost: 0,
+    midBarrier: { name: 'Boulder Fall',     cost: 1.0e6,  icon: '🪨', desc: 'A rockfall blocks the deeper shafts of this mine' } },
+  { id: 'deep',    name: 'Deep Earth',    icon: '🦴', firstShaft: 8,  shaftCount: 8, unlockCost: 5.0e6,
+    midBarrier: { name: 'Quartz Wall',      cost: 4.0e12, icon: '💎', desc: 'A quartz seam waiting to be cracked open' } },
+  { id: 'forge',   name: 'Hellforge',     icon: '🌋', firstShaft: 16, shaftCount: 8, unlockCost: 2.0e13,
+    midBarrier: { name: 'Magnetic Storm',   cost: 3.0e19, icon: '⚡', desc: 'Volatile fields tearing at the rock' } },
+  { id: 'magma',   name: 'Magma Layer',   icon: '🔥', firstShaft: 24, shaftCount: 8, unlockCost: 5.0e20,
+    midBarrier: { name: 'Pyroclastic Flow', cost: 1.5e26, icon: '☄',  desc: 'A rolling cloud of molten ash' } },
+  { id: 'ice',     name: 'Glacial Reach', icon: '❄',  firstShaft: 32, shaftCount: 8, unlockCost: 1.0e26,
+    midBarrier: { name: 'Permafrost Wall',  cost: 8.0e32, icon: '🧊', desc: 'A glacier inside the glacier' } },
+  { id: 'cosmic',  name: 'Cosmic Verge',  icon: '✦',  firstShaft: 40, shaftCount: 8, unlockCost: 5.0e33,
+    midBarrier: { name: 'Event Horizon',    cost: 3.0e39, icon: '🌌', desc: 'A swirling tear at the edge of light' } },
 ];
 
-// ---------- SHAFT CATALOG (global, indexed 0..23) ----------
+// ---------- SHAFT CATALOG (global, indexed 0..47) ----------
+// `tier` drives the per-shaft cost-formula scaling. Existing shafts retain
+// integer tiers from before the 4→8 expansion; new shafts get fractional
+// tiers between adjacent integers so upgrade prices on existing shafts are
+// unchanged across the migration.
 const SHAFT_DEFS = [
-  // Zone: Surface Mine
-  { name: 'Surface Quarry',     unlockCost: 0,        baseTime: 3.0,  baseCap: 10,    baseOre: 2 },
-  { name: 'Copper Vein',        unlockCost: 250,      baseTime: 4.0,  baseCap: 14,    baseOre: 4 },
-  { name: 'Silver Tunnel',      unlockCost: 1.0e4,    baseTime: 5.0,  baseCap: 20,    baseOre: 8 },
-  { name: 'Gold Cavern',        unlockCost: 5.0e5,    baseTime: 6.0,  baseCap: 28,    baseOre: 16 },
-  // Zone: Deep Earth
-  { name: 'Platinum Depths',    unlockCost: 2.5e7,    baseTime: 7.0,  baseCap: 40,    baseOre: 32 },
-  { name: 'Diamond Mine',       unlockCost: 1.25e9,   baseTime: 9.0,  baseCap: 55,    baseOre: 64 },
-  { name: 'Mithril Shaft',      unlockCost: 6.0e10,   baseTime: 11.0, baseCap: 75,    baseOre: 128 },
-  { name: 'Adamantite Core',    unlockCost: 3.0e12,   baseTime: 13.0, baseCap: 100,   baseOre: 256 },
-  // Zone: Hellforge
-  { name: 'Obsidian Forge',     unlockCost: 1.5e14,   baseTime: 15.0, baseCap: 140,   baseOre: 512 },
-  { name: 'Cobalt Reactor',     unlockCost: 7.5e15,   baseTime: 17.0, baseCap: 180,   baseOre: 1024 },
-  { name: 'Antimatter Layer',   unlockCost: 4.0e17,   baseTime: 19.0, baseCap: 220,   baseOre: 2048 },
-  { name: 'Quantum Core',       unlockCost: 2.0e19,   baseTime: 21.0, baseCap: 280,   baseOre: 4096 },
-  // Zone: Magma Layer
-  { name: 'Magma Vein',         unlockCost: 1.0e21,   baseTime: 23.0, baseCap: 360,   baseOre: 8192 },
-  { name: 'Sulphur Pit',        unlockCost: 5.0e22,   baseTime: 25.0, baseCap: 460,   baseOre: 16384 },
-  { name: 'Molten Forge',       unlockCost: 2.0e24,   baseTime: 27.0, baseCap: 580,   baseOre: 32768 },
-  { name: 'Lava Heart',         unlockCost: 1.0e26,   baseTime: 29.0, baseCap: 720,   baseOre: 65536 },
-  // Zone: Glacial Reach
-  { name: 'Ice Cavern',         unlockCost: 5.0e27,   baseTime: 31.0, baseCap: 880,   baseOre: 131072 },
-  { name: 'Frostbite Hollow',   unlockCost: 2.0e29,   baseTime: 33.0, baseCap: 1080,  baseOre: 262144 },
-  { name: 'Crystalline Lattice',unlockCost: 1.0e31,   baseTime: 35.0, baseCap: 1300,  baseOre: 524288 },
-  { name: 'Glacial Vault',      unlockCost: 5.0e32,   baseTime: 37.0, baseCap: 1560,  baseOre: 1048576 },
-  // Zone: Cosmic Verge
-  { name: 'Stardust Layer',     unlockCost: 2.0e34,   baseTime: 39.0, baseCap: 1860,  baseOre: 2097152 },
-  { name: 'Nebula Cradle',      unlockCost: 1.0e36,   baseTime: 41.0, baseCap: 2200,  baseOre: 4194304 },
-  { name: 'Void Crystal Mantle',unlockCost: 5.0e37,   baseTime: 43.0, baseCap: 2600,  baseOre: 8388608 },
-  { name: 'Singularity',        unlockCost: 2.0e39,   baseTime: 45.0, baseCap: 3100,  baseOre: 16777216 },
+  // Zone 0 — Surface Mine (existing first half)
+  { name: 'Surface Quarry',     tier: 0,    unlockCost: 0,        baseTime: 3.0,  baseCap: 10,    baseOre: 2 },
+  { name: 'Copper Vein',        tier: 1,    unlockCost: 250,      baseTime: 4.0,  baseCap: 14,    baseOre: 4 },
+  { name: 'Silver Tunnel',      tier: 2,    unlockCost: 1.0e4,    baseTime: 5.0,  baseCap: 20,    baseOre: 8 },
+  { name: 'Gold Cavern',        tier: 3,    unlockCost: 5.0e5,    baseTime: 6.0,  baseCap: 28,    baseOre: 16 },
+  // Zone 0 — second half (new, after the Boulder Fall)
+  { name: 'Tin Mine',           tier: 3.2,  unlockCost: 1.5e6,    baseTime: 6.5,  baseCap: 32,    baseOre: 20 },
+  { name: 'Lead Vein',          tier: 3.4,  unlockCost: 4.0e6,    baseTime: 6.7,  baseCap: 36,    baseOre: 24 },
+  { name: 'Iron Foundry',       tier: 3.6,  unlockCost: 1.0e7,    baseTime: 6.9,  baseCap: 38,    baseOre: 28 },
+  { name: 'Bauxite Reserve',    tier: 3.8,  unlockCost: 2.0e7,    baseTime: 6.95, baseCap: 39,    baseOre: 30 },
+
+  // Zone 1 — Deep Earth (existing first half)
+  { name: 'Platinum Depths',    tier: 4,    unlockCost: 2.5e7,    baseTime: 7.0,  baseCap: 40,    baseOre: 32 },
+  { name: 'Diamond Mine',       tier: 5,    unlockCost: 1.25e9,   baseTime: 9.0,  baseCap: 55,    baseOre: 64 },
+  { name: 'Mithril Shaft',      tier: 6,    unlockCost: 6.0e10,   baseTime: 11.0, baseCap: 75,    baseOre: 128 },
+  { name: 'Adamantite Core',    tier: 7,    unlockCost: 3.0e12,   baseTime: 13.0, baseCap: 100,   baseOre: 256 },
+  // Zone 1 — second half (new)
+  { name: 'Sapphire Veins',     tier: 7.2,  unlockCost: 6.0e12,   baseTime: 13.5, baseCap: 110,   baseOre: 320 },
+  { name: 'Emerald Hollow',     tier: 7.4,  unlockCost: 1.5e13,   baseTime: 14.0, baseCap: 122,   baseOre: 380 },
+  { name: 'Ruby Forge',         tier: 7.6,  unlockCost: 4.0e13,   baseTime: 14.4, baseCap: 130,   baseOre: 440 },
+  { name: 'Onyx Reserve',       tier: 7.8,  unlockCost: 8.0e13,   baseTime: 14.7, baseCap: 135,   baseOre: 480 },
+
+  // Zone 2 — Hellforge (existing first half)
+  { name: 'Obsidian Forge',     tier: 8,    unlockCost: 1.5e14,   baseTime: 15.0, baseCap: 140,   baseOre: 512 },
+  { name: 'Cobalt Reactor',     tier: 9,    unlockCost: 7.5e15,   baseTime: 17.0, baseCap: 180,   baseOre: 1024 },
+  { name: 'Antimatter Layer',   tier: 10,   unlockCost: 4.0e17,   baseTime: 19.0, baseCap: 220,   baseOre: 2048 },
+  { name: 'Quantum Core',       tier: 11,   unlockCost: 2.0e19,   baseTime: 21.0, baseCap: 280,   baseOre: 4096 },
+  // Zone 2 — second half (new)
+  { name: 'Plasma Vein',        tier: 11.2, unlockCost: 5.0e19,   baseTime: 21.5, baseCap: 310,   baseOre: 5120 },
+  { name: 'Phoenix Ember',      tier: 11.4, unlockCost: 1.5e20,   baseTime: 22.0, baseCap: 340,   baseOre: 6144 },
+  { name: 'Rift Crystal',       tier: 11.6, unlockCost: 3.5e20,   baseTime: 22.4, baseCap: 360,   baseOre: 7168 },
+  { name: 'Tachyon Core',       tier: 11.8, unlockCost: 7.0e20,   baseTime: 22.7, baseCap: 370,   baseOre: 7800 },
+
+  // Zone 3 — Magma Layer (existing first half)
+  { name: 'Magma Vein',         tier: 12,   unlockCost: 1.0e21,   baseTime: 23.0, baseCap: 360,   baseOre: 8192 },
+  { name: 'Sulphur Pit',        tier: 13,   unlockCost: 5.0e22,   baseTime: 25.0, baseCap: 460,   baseOre: 16384 },
+  { name: 'Molten Forge',       tier: 14,   unlockCost: 2.0e24,   baseTime: 27.0, baseCap: 580,   baseOre: 32768 },
+  { name: 'Lava Heart',         tier: 15,   unlockCost: 1.0e26,   baseTime: 29.0, baseCap: 720,   baseOre: 65536 },
+  // Zone 3 — second half (new)
+  { name: 'Cinder Cone',        tier: 15.2, unlockCost: 2.5e26,   baseTime: 29.5, baseCap: 800,   baseOre: 81920 },
+  { name: 'Brimstone Vault',    tier: 15.4, unlockCost: 7.0e26,   baseTime: 30.0, baseCap: 880,   baseOre: 98304 },
+  { name: 'Obsidian Tear',      tier: 15.6, unlockCost: 2.0e27,   baseTime: 30.4, baseCap: 940,   baseOre: 114688 },
+  { name: 'Hellfire Core',      tier: 15.8, unlockCost: 4.0e27,   baseTime: 30.7, baseCap: 980,   baseOre: 124928 },
+
+  // Zone 4 — Glacial Reach (existing first half)
+  { name: 'Ice Cavern',         tier: 16,   unlockCost: 5.0e27,   baseTime: 31.0, baseCap: 880,   baseOre: 131072 },
+  { name: 'Frostbite Hollow',   tier: 17,   unlockCost: 2.0e29,   baseTime: 33.0, baseCap: 1080,  baseOre: 262144 },
+  { name: 'Crystalline Lattice',tier: 18,   unlockCost: 1.0e31,   baseTime: 35.0, baseCap: 1300,  baseOre: 524288 },
+  { name: 'Glacial Vault',      tier: 19,   unlockCost: 5.0e32,   baseTime: 37.0, baseCap: 1560,  baseOre: 1048576 },
+  // Zone 4 — second half (new)
+  { name: 'Aurora Vein',        tier: 19.2, unlockCost: 1.2e33,   baseTime: 37.5, baseCap: 1700,  baseOre: 1310720 },
+  { name: 'Cryo Chamber',       tier: 19.4, unlockCost: 3.0e33,   baseTime: 38.0, baseCap: 1850,  baseOre: 1572864 },
+  { name: 'Frostforge',         tier: 19.6, unlockCost: 8.0e33,   baseTime: 38.4, baseCap: 1980,  baseOre: 1835008 },
+  { name: 'Eternal Glacier',    tier: 19.8, unlockCost: 1.5e34,   baseTime: 38.7, baseCap: 2050,  baseOre: 1998848 },
+
+  // Zone 5 — Cosmic Verge (existing first half)
+  { name: 'Stardust Layer',     tier: 20,   unlockCost: 2.0e34,   baseTime: 39.0, baseCap: 1860,  baseOre: 2097152 },
+  { name: 'Nebula Cradle',      tier: 21,   unlockCost: 1.0e36,   baseTime: 41.0, baseCap: 2200,  baseOre: 4194304 },
+  { name: 'Void Crystal Mantle',tier: 22,   unlockCost: 5.0e37,   baseTime: 43.0, baseCap: 2600,  baseOre: 8388608 },
+  { name: 'Singularity',        tier: 23,   unlockCost: 2.0e39,   baseTime: 45.0, baseCap: 3100,  baseOre: 16777216 },
+  // Zone 5 — second half (new)
+  { name: 'Pulsar Core',        tier: 23.2, unlockCost: 5.0e39,   baseTime: 45.5, baseCap: 3400,  baseOre: 20971520 },
+  { name: 'Quasar Array',       tier: 23.4, unlockCost: 1.5e40,   baseTime: 46.0, baseCap: 3700,  baseOre: 25165824 },
+  { name: 'Big Bang Echo',      tier: 23.6, unlockCost: 4.0e40,   baseTime: 46.4, baseCap: 3950,  baseOre: 29360128 },
+  { name: 'Omega Point',        tier: 23.8, unlockCost: 8.0e40,   baseTime: 46.7, baseCap: 4100,  baseOre: 31981568 },
 ];
 
 // global shaft index given (zone, localK)
@@ -63,7 +108,7 @@ function freshWorker() {
   return { speedLevel: 1, capLevel: 1, cargo: 0, pos: 0, target: 0, stateName: 'idle', timer: 0, auto: false, manualTrip: false };
 }
 function freshProcessor() {
-  return { speedLevel: 1, valueLevel: 1, buffer: 0, progress: 0, auto: false };
+  return { speedLevel: 1, valueLevel: 1, parallelLevel: 1, buffer: 0, progress: 0, auto: false };
 }
 function freshZone(z) {
   const def = ZONE_DEFS[z];
@@ -75,6 +120,7 @@ function freshZone(z) {
   }
   return {
     shafts,
+    midBarrier: { cleared: false },
     elevator: freshElevator(),
     worker: freshWorker(),
     processor: freshProcessor(),
@@ -138,29 +184,35 @@ function workerCap(z)     { return Math.floor(4 * Math.pow(1.30, state.zones[z].
 
 function processorTime(z) {
   const lvl = state.zones[z].processor.speedLevel;
-  // Two-stage soft cap so processing keeps scaling deep into the late game:
-  // 1-30  : 1.12x per level (fast early progression)
-  // 31-60 : 1.08x per level (mild post-cap)
-  // 61+   : 1.05x per level (hard post-cap, but still meaningful)
-  if (lvl <= 30) return 1.5 / Math.pow(1.12, lvl - 1);
-  if (lvl <= 60) return 1.5 / Math.pow(1.12, 29) / Math.pow(1.08, lvl - 30);
-  return 1.5 / Math.pow(1.12, 29) / Math.pow(1.08, 30) / Math.pow(1.05, lvl - 60);
+  // No late-game cap — speedLevel cost grows 1.20x/level so per-level ROI
+  // diminishes naturally. 1.12x effect / 1.20x cost = 0.93x per level.
+  return 1.5 / Math.pow(1.12, lvl - 1);
 }
 function processorValue(z) {
   const lvl = state.zones[z].processor.valueLevel;
-  if (lvl <= 18) return 2 * Math.pow(1.35, lvl - 1);
-  return 2 * Math.pow(1.35, 17) * Math.pow(1.14, lvl - 18);
+  // Tightened late-game scaling so ore value doesn't dominate income:
+  // 1-15  : 1.35x per level
+  // 16-30 : 1.10x per level (mild post-cap)
+  // 31+   : 1.05x per level (hard post-cap)
+  if (lvl <= 15) return 2 * Math.pow(1.35, lvl - 1);
+  if (lvl <= 30) return 2 * Math.pow(1.35, 14) * Math.pow(1.10, lvl - 15);
+  return 2 * Math.pow(1.35, 14) * Math.pow(1.10, 15) * Math.pow(1.05, lvl - 30);
 }
+function processorParallel(z) { return state.zones[z].processor.parallelLevel; }
 
 // Pipeline costs scale by zone tier so a zone-5 elevator costs proportionally
 // to the wealth available there. 16^z roughly tracks the zone-to-zone yield jump.
 function zoneCostScale(z) { return Math.pow(16, z); }
 
+// Shaft costs use def.tier (was global index) so new fractional-tier shafts
+// don't disrupt the upgrade-cost curve of pre-existing shafts.
+function shaftTier(z, k) { return SHAFT_DEFS[gIdx(z, k)].tier; }
+
 const COSTS = {
-  shaftMine:    (z, k) => 8   * Math.pow(8, gIdx(z, k)) * Math.pow(1.15, state.zones[z].shafts[k].mineLevel - 1),
-  shaftCap:     (z, k) => 20  * Math.pow(8, gIdx(z, k)) * Math.pow(1.20, state.zones[z].shafts[k].capLevel - 1),
-  shaftMiner:   (z, k) => 40  * Math.pow(8, gIdx(z, k)) * Math.pow(1.40, state.zones[z].shafts[k].minerLevel - 1),
-  shaftForeman: (z, k) => 75  * Math.pow(40, gIdx(z, k)),
+  shaftMine:    (z, k) => 8   * Math.pow(8, shaftTier(z, k)) * Math.pow(1.15, state.zones[z].shafts[k].mineLevel - 1),
+  shaftCap:     (z, k) => 20  * Math.pow(8, shaftTier(z, k)) * Math.pow(1.20, state.zones[z].shafts[k].capLevel - 1),
+  shaftMiner:   (z, k) => 40  * Math.pow(8, shaftTier(z, k)) * Math.pow(1.40, state.zones[z].shafts[k].minerLevel - 1),
+  shaftForeman: (z, k) => 75  * Math.pow(40, shaftTier(z, k)),
   elevSpeed:    (z) => 30  * zoneCostScale(z) * Math.pow(1.18, state.zones[z].elevator.speedLevel - 1),
   elevCap:      (z) => 50  * zoneCostScale(z) * Math.pow(1.22, state.zones[z].elevator.capLevel - 1),
   elevAuto:     (z) => 175 * zoneCostScale(z),
@@ -169,6 +221,7 @@ const COSTS = {
   workerAuto:   (z) => 100 * zoneCostScale(z),
   procSpeed:    (z) => 60  * zoneCostScale(z) * Math.pow(1.20, state.zones[z].processor.speedLevel - 1),
   procValue:    (z) => 120 * zoneCostScale(z) * Math.pow(1.30, state.zones[z].processor.valueLevel - 1),
+  procParallel: (z) => 800 * zoneCostScale(z) * Math.pow(2.0, state.zones[z].processor.parallelLevel - 1),
   procAuto:     (z) => 600 * zoneCostScale(z),
 };
 
@@ -186,6 +239,12 @@ function fmtTime(s) {
   if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + 's';
   if (s < 3600) return Math.floor(s/60) + 'm ' + Math.floor(s%60) + 's';
   return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+// Display cycle time as "X / cycle" or, once cycles are sub-second, as a
+// throughput rate so the late-game number stays meaningful.
+function fmtCycleRate(t) {
+  if (t >= 1) return t.toFixed(t < 10 ? 1 : 0) + 's / ore';
+  return fmt(1 / t) + ' ore/s';
 }
 
 // ---------- SIM TICK ----------
@@ -305,18 +364,21 @@ function tickZone(z, dt) {
     }
   }
 
-  // processor — same auto/manual split as shafts. Progress accumulates so the
-  // cycle bar fills visibly; auto drains it into ore, manual caps at one cycle.
+  // processor — auto drains progress into ore (closed-form math); manual caps
+  // at one cycle and waits for click. parallelLevel multiplies ores per cycle
+  // so a higher-tier processor can match very high mining throughput.
   const p = zone.processor;
   if (p.buffer > 0) {
     p.progress += dt;
     const t = processorTime(z);
     if (p.auto) {
       if (p.progress >= t) {
+        const par = processorParallel(z);
         const slots = Math.floor(p.progress / t);
-        const ores = Math.min(slots, p.buffer);
+        const ores = Math.min(slots * par, p.buffer);
         if (ores > 0) {
-          p.progress -= ores * t;
+          const slotsUsed = Math.ceil(ores / par);
+          p.progress -= slotsUsed * t;
           p.buffer -= ores;
           const earned = ores * processorValue(z);
           state.money += earned;
@@ -379,9 +441,11 @@ function clickProcessor() {
   pulseClick($('processor'));
   const t = processorTime(z);
   if (p.progress < t) return; // cycle bar must be full
+  const par = processorParallel(z);
+  const ores = Math.min(par, p.buffer);
   p.progress = 0;
-  p.buffer -= 1;
-  const earned = processorValue(z);
+  p.buffer -= ores;
+  const earned = ores * processorValue(z);
   state.money += earned;
   spawnMoney(earned);
 }
@@ -529,12 +593,23 @@ function tryUnlockZone(z) {
 }
 
 // ---------- BUILD SHAFTS DOM (for current zone) ----------
+// Returns ordered rows: { type: 'shaft', k } | { type: 'barrier' }. Reveals
+// rows up to the first locked shaft; if all four pre-barrier shafts are
+// unlocked and the mid-barrier isn't cleared, the barrier row is shown next
+// (and post-barrier shafts remain hidden until it's cleared).
 function getVisibleShaftRows() {
   const z = state.currentZone;
-  const shafts = state.zones[z].shafts;
+  const zone = state.zones[z];
+  const shafts = zone.shafts;
   const rows = [];
   for (let k = 0; k < shafts.length; k++) {
-    rows.push(k);
+    if (k === 4) {
+      if (!zone.midBarrier.cleared) {
+        rows.push({ type: 'barrier' });
+        return rows;
+      }
+    }
+    rows.push({ type: 'shaft', k });
     if (!shafts[k].unlocked) break;
   }
   return rows;
@@ -546,9 +621,37 @@ function buildShafts() {
   root.innerHTML = '';
   refs.shafts = new Array(state.zones[z].shafts.length).fill(null);
 
+  refs.midBarrier = null;
   const rows = getVisibleShaftRows();
   for (let r = 0; r < rows.length; r++) {
-    const k = rows[r];
+    const row = rows[r];
+    if (row.type === 'barrier') {
+      const bdef = ZONE_DEFS[z].midBarrier;
+      const el = document.createElement('div');
+      el.className = 'barrier';
+      el.dataset.zone = ZONE_DEFS[z].id;
+      el.innerHTML = `
+        <div class="barrier-tunnel">
+          <div class="barrier-icon">${bdef.icon}</div>
+          <div class="barrier-info">
+            <div class="barrier-name">${bdef.name}</div>
+            <div class="barrier-desc">${bdef.desc}</div>
+          </div>
+          <div class="barrier-action">Clear — <span class="barrier-cost">$${fmt(bdef.cost)}</span></div>
+        </div>
+        <div class="shaft-label">Blocked</div>
+      `;
+      root.appendChild(el);
+      const tunnel = el.querySelector('.barrier-tunnel');
+      refs.midBarrier = {
+        el, tunnel, rowIndex: r,
+        cost: el.querySelector('.barrier-cost'),
+        action: el.querySelector('.barrier-action'),
+      };
+      tunnel.addEventListener('click', () => tryClearMidBarrier());
+      continue;
+    }
+    const k = row.k;
     const s = state.zones[z].shafts[k];
     const def = SHAFT_DEFS[gIdx(z, k)];
     const el = document.createElement('div');
@@ -652,6 +755,22 @@ function tryUnlockShaft(k) {
   saveSoon();
 }
 
+function tryClearMidBarrier() {
+  const z = state.currentZone;
+  const zone = state.zones[z];
+  const def = ZONE_DEFS[z].midBarrier;
+  if (zone.midBarrier.cleared) return;
+  if (state.money < def.cost) return;
+  state.money -= def.cost;
+  zone.midBarrier.cleared = true;
+  // The first post-barrier shaft auto-unlocks for free, like zone-entry.
+  if (zone.shafts[4] && !zone.shafts[4].unlocked) zone.shafts[4].unlocked = true;
+  if (refs.midBarrier && refs.midBarrier.el) spawnPow(refs.midBarrier.el, 'CLEARED!');
+  buildShafts();
+  buildUpgradesPanel();
+  saveSoon();
+}
+
 // ---------- UPGRADES (current zone) ----------
 function getUpgradeDefs() {
   const z = state.currentZone;
@@ -709,8 +828,9 @@ function getUpgradeDefs() {
   }
 
   defs.push({ section: 'Processor' });
-  defs.push({ id: 'proc_speed', name: 'Processing Speed', get: () => zone.processor.speedLevel, eff: () => fmtTime(processorTime(z)) + ' / ore', cost: () => COSTS.procSpeed(z), buy: () => zone.processor.speedLevel++ });
+  defs.push({ id: 'proc_speed', name: 'Processing Speed', get: () => zone.processor.speedLevel, eff: () => fmtCycleRate(processorTime(z)), cost: () => COSTS.procSpeed(z), buy: () => zone.processor.speedLevel++ });
   defs.push({ id: 'proc_value', name: 'Ore Value',        get: () => zone.processor.valueLevel, eff: () => '$' + fmt(processorValue(z)) + ' / ore', cost: () => COSTS.procValue(z), buy: () => zone.processor.valueLevel++ });
+  defs.push({ id: 'proc_par',   name: 'Parallel Processing', get: () => zone.processor.parallelLevel, eff: () => fmt(processorParallel(z)) + ' ore / cycle', cost: () => COSTS.procParallel(z), buy: () => zone.processor.parallelLevel++ });
   if (!zone.processor.auto) {
     defs.push({ id: 'proc_auto', name: '🤖 Hire Operator', oneShot: true, eff: () => 'Auto-processes ore', cost: () => COSTS.procAuto(z), buy: () => { zone.processor.auto = true; } });
   }
@@ -931,8 +1051,8 @@ function render() {
     u.el.classList.toggle('affordable', afford);
   }
 
-  // detect when scene needs full rebuild (a new shaft unlocked, or the
-  // zone-gateway row needs to appear/disappear)
+  // detect when scene needs full rebuild (a new shaft unlocked, the
+  // mid-barrier was cleared, or the zone-gateway row needs to appear/disappear)
   const allUnlocked = zone.shafts.every(s => s.unlocked);
   const wantGateway = allUnlocked && z < ZONE_DEFS.length - 1;
   const expectedRows = getVisibleShaftRows().length + (wantGateway ? 1 : 0);
@@ -1019,6 +1139,27 @@ function migrateLegacy(data) {
 }
 function k_oldHasPipeline(data) { return data && (data.elevator || data.worker || data.processor); }
 
+// Bring any saved zone shape up to current schema: pad shafts to shaftCount,
+// add midBarrier and processor.parallelLevel if missing. Preserves all
+// existing player data.
+function migrateZoneShape(data) {
+  if (!data || !data.zones) return data;
+  for (let z = 0; z < ZONE_DEFS.length; z++) {
+    const def = ZONE_DEFS[z];
+    if (!data.zones[z]) data.zones[z] = freshZone(z);
+    const zone = data.zones[z];
+    if (!Array.isArray(zone.shafts)) zone.shafts = [];
+    while (zone.shafts.length < def.shaftCount) zone.shafts.push(freshShaft());
+    if (!zone.midBarrier) zone.midBarrier = { cleared: false };
+    if (!zone.processor) zone.processor = freshProcessor();
+    if (zone.processor.parallelLevel == null) zone.processor.parallelLevel = 1;
+    if (!zone.elevator) zone.elevator = freshElevator();
+    if (!zone.worker) zone.worker = freshWorker();
+    if (zone.surfaceDropoff == null) zone.surfaceDropoff = 0;
+  }
+  return data;
+}
+
 function load() {
   const raw = localStorage.getItem(SAVE_KEY) ||
               localStorage.getItem('idleminer_save_v4'); // pick up the previous key if user has one
@@ -1026,8 +1167,8 @@ function load() {
   try {
     let data = JSON.parse(raw);
     data = migrateLegacy(data);
+    data = migrateZoneShape(data);
     state = Object.assign(freshState(), data);
-    // pad zones array if ZONE_DEFS changed
     while (state.zones.length < ZONE_DEFS.length) state.zones.push(freshZone(state.zones.length));
     while (state.zonesUnlocked.length < ZONE_DEFS.length) state.zonesUnlocked.push(false);
     return true;
@@ -1067,6 +1208,7 @@ function importSaveString(input) {
     const json = decodeURIComponent(escape(bin));
     let data = JSON.parse(json);
     data = migrateLegacy(data);
+    data = migrateZoneShape(data);
     state = Object.assign(freshState(), data);
     while (state.zones.length < ZONE_DEFS.length) state.zones.push(freshZone(state.zones.length));
     while (state.zonesUnlocked.length < ZONE_DEFS.length) state.zonesUnlocked.push(false);
