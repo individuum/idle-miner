@@ -348,32 +348,86 @@ function tickZone(z, dt) {
     if (s.ore >= cap) s.progress = 0;
   }
 
-  // elevator
+  // elevator — multi-stop trip:
+  //   idle → descending (target = deepest shaft with ore)
+  //         → loading at deepest
+  //         → ascending, pausing to load at any shaft with ore on the way up
+  //           as long as cargo space remains
+  //         → unloading at surface
+  //         → idle
   const ev = zone.elevator;
+  const evCap = elevatorCap(z);
+  const evSpace = evCap - ev.cargo;
+
   if (ev.stateName === 'idle' && (ev.auto || ev.manualTrip)) {
-    if (ev.cargo > 0) { ev.target = 0; ev.stateName = 'ascending'; }
-    else {
-      const idx = bestShaftWithOre(z);
+    if (ev.cargo >= evCap) {
+      // already full; head straight up
+      ev.target = 0;
+      ev.stateName = 'ascending';
+    } else if (ev.cargo > 0) {
+      // partial cargo: look for a shaft above us with ore, otherwise surface
+      const above = nextShaftAboveWithOre(z, ev.pos);
+      if (above >= 0) {
+        ev.target = above + 1;
+        ev.stateName = 'ascending';
+      } else {
+        ev.target = 0;
+        ev.stateName = 'ascending';
+      }
+    } else {
+      // empty: descend to deepest unlocked shaft that has ore
+      const idx = deepestShaftWithOre(z);
       if (idx >= 0) { ev.target = idx + 1; ev.stateName = 'descending'; }
       else if (ev.manualTrip) ev.manualTrip = false;
     }
   }
-  if (ev.stateName === 'descending' || ev.stateName === 'ascending') {
-    const dir = ev.target > ev.pos ? 1 : -1;
-    ev.pos += dir * elevatorSpeed(z) * dt;
-    if ((dir > 0 && ev.pos >= ev.target) || (dir < 0 && ev.pos <= ev.target)) {
+
+  if (ev.stateName === 'descending') {
+    ev.pos += elevatorSpeed(z) * dt;
+    if (ev.pos >= ev.target) {
       ev.pos = ev.target;
       ev.timer = 0;
-      ev.stateName = ev.target === 0 ? 'unloading' : 'loading';
-      if (z === state.currentZone) spawnPuff('elevator', ev.target === 0 ? 'top' : 'bottom');
+      ev.stateName = 'loading';
+      if (z === state.currentZone) spawnPuff('elevator', 'bottom');
+    }
+  } else if (ev.stateName === 'ascending') {
+    const newPos = ev.pos - elevatorSpeed(z) * dt;
+    // Did we cross a shaft we should stop at? Only if there's still cargo space.
+    let stopped = false;
+    if (evSpace > 0) {
+      // Iterate shafts from deepest to shallowest so the FIRST shaft we pass
+      // chronologically (highest pos crossed) is the one we stop at.
+      for (let k = zone.shafts.length - 1; k >= 0; k--) {
+        const shaftPos = k + 1;
+        if (shaftPos < ev.pos - 1e-9 && shaftPos >= newPos - 1e-9) {
+          const s = zone.shafts[k];
+          if (s.unlocked && s.ore > 0) {
+            ev.pos = shaftPos;
+            ev.target = shaftPos;
+            ev.timer = 0;
+            ev.stateName = 'loading';
+            stopped = true;
+            if (z === state.currentZone) spawnPuff('elevator', 'bottom');
+            break;
+          }
+        }
+      }
+    }
+    if (!stopped) {
+      ev.pos = newPos;
+      if (ev.pos <= 0) {
+        ev.pos = 0;
+        ev.timer = 0;
+        ev.stateName = 'unloading';
+        if (z === state.currentZone) spawnPuff('elevator', 'top');
+      }
     }
   } else if (ev.stateName === 'loading') {
     ev.timer += dt;
     if (ev.timer >= 0.25) {
       const k = Math.round(ev.pos) - 1;
       if (k >= 0 && k < zone.shafts.length) {
-        const space = elevatorCap(z) - ev.cargo;
-        const take = Math.min(space, zone.shafts[k].ore);
+        const take = Math.min(evSpace, zone.shafts[k].ore);
         ev.cargo += take;
         zone.shafts[k].ore -= take;
         if (take > 0 && z === state.currentZone) {
@@ -458,27 +512,30 @@ function tickZone(z, dt) {
   if (p.buffer <= 0) p.progress = 0;
 }
 
-// Pick the shaft most worth visiting: highest fill ratio (ore/cap), with
-// raw-ore as tiebreak (deeper shafts have bigger caps, so a deeper full
-// shaft yields more cargo per trip than a shallow full one). This rotates
-// the elevator across the zone instead of dwelling on whichever shaft
-// happens to have the most absolute ore — usually the fast-mining shaft 0.
-function bestShaftWithOre(z) {
+// Deepest unlocked shaft that has ore — descend target. Multi-stop ascend
+// then picks up shallower shafts on the way back up.
+function deepestShaftWithOre(z) {
   const shafts = state.zones[z].shafts;
-  let best = -1, bestRatio = -1, bestOre = 0;
-  for (let k = 0; k < shafts.length; k++) {
+  for (let k = shafts.length - 1; k >= 0; k--) {
     const s = shafts[k];
-    if (!s.unlocked || s.ore <= 0) continue;
-    const cap = shaftOreCap(z, k);
-    const ratio = s.ore / cap;
-    if (ratio > bestRatio + 1e-9 ||
-       (Math.abs(ratio - bestRatio) < 1e-9 && s.ore > bestOre)) {
-      best = k;
-      bestRatio = ratio;
-      bestOre = s.ore;
-    }
+    if (s.unlocked && s.ore > 0) return k;
   }
-  return best;
+  return -1;
+}
+
+// Used when the lift idles mid-shaft with partial cargo: find the deepest
+// shaft strictly above current pos (smaller pos value than ev.pos) that has
+// ore, so the lift continues upward picking up rather than overshooting to
+// the surface and re-descending.
+function nextShaftAboveWithOre(z, currentPos) {
+  const shafts = state.zones[z].shafts;
+  for (let k = shafts.length - 1; k >= 0; k--) {
+    const shaftPos = k + 1;
+    if (shaftPos >= currentPos) continue;
+    const s = shafts[k];
+    if (s.unlocked && s.ore > 0) return k;
+  }
+  return -1;
 }
 
 // ---------- MANUAL CLICKS ----------
