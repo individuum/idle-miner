@@ -58,7 +58,6 @@ function freshState() {
       auto: false,
     },
     lastTimestamp: Date.now(),
-    earnedRecent: [],
   };
 }
 
@@ -89,8 +88,8 @@ function processorTime() {
 }
 function processorValue() {
   const lvl = state.processor.valueLevel;
-  if (lvl <= 20) return 2 * Math.pow(1.45, lvl - 1);
-  return 2 * Math.pow(1.45, 19) * Math.pow(1.18, lvl - 20);
+  if (lvl <= 18) return 2 * Math.pow(1.35, lvl - 1);
+  return 2 * Math.pow(1.35, 17) * Math.pow(1.14, lvl - 18);
 }
 
 const COSTS = {
@@ -246,18 +245,20 @@ function tick(dt) {
     }
   }
 
-  // processor
+  // processor — coalesce per-ore allocations: one spawnMoney + one money add per tick
   const p = state.processor;
   if (p.auto && p.buffer > 0) {
     p.progress += dt;
     const t = processorTime();
+    let earnedTick = 0;
     while (p.progress >= t && p.buffer > 0) {
       p.progress -= t;
       p.buffer -= 1;
-      const earned = processorValue();
-      state.money += earned;
-      pushEarning(earned);
-      spawnMoney(earned);
+      earnedTick += processorValue();
+    }
+    if (earnedTick > 0) {
+      state.money += earnedTick;
+      spawnMoney(earnedTick);
     }
     if (p.buffer <= 0) p.progress = 0;
   } else if (p.buffer <= 0) {
@@ -274,22 +275,35 @@ function bestShaftWithOre() {
   return best;
 }
 
-function pushEarning(amount) {
-  const now = performance.now();
-  state.earnedRecent.push({ t: now, amount });
-  const cutoff = now - 5000;
-  while (state.earnedRecent.length && state.earnedRecent[0].t < cutoff) {
-    state.earnedRecent.shift();
-  }
+let _offlineCatchup = false;
+
+// Rate is sampled (not summed per-event) so that millions of earn events per
+// second don't pile up — fixed-size circular-ish buffer of money snapshots.
+const RATE_WINDOW_SEC = 5;
+const RATE_SAMPLE_HZ = 5;
+const RATE_BUFFER_SIZE = RATE_WINDOW_SEC * RATE_SAMPLE_HZ;
+let _rateBuffer = [];
+let _rateLastSampleAt = 0;
+
+function sampleRate(now) {
+  if (now - _rateLastSampleAt < 1000 / RATE_SAMPLE_HZ) return;
+  _rateLastSampleAt = now;
+  _rateBuffer.push({ t: now, money: state.money });
+  if (_rateBuffer.length > RATE_BUFFER_SIZE) _rateBuffer.shift();
 }
 
 function currentRate() {
-  if (state.earnedRecent.length === 0) return 0;
-  const now = performance.now();
-  const cutoff = now - 5000;
-  let sum = 0;
-  for (const e of state.earnedRecent) if (e.t >= cutoff) sum += e.amount;
-  return sum / 5;
+  if (_rateBuffer.length < 2) return 0;
+  const first = _rateBuffer[0];
+  const last = _rateBuffer[_rateBuffer.length - 1];
+  const dt = (last.t - first.t) / 1000;
+  if (dt <= 0) return 0;
+  return Math.max(0, (last.money - first.money) / dt);
+}
+
+function resetRateBuffer() {
+  _rateBuffer = [];
+  _rateLastSampleAt = 0;
 }
 
 // ---------- MANUAL CLICK HANDLERS ----------
@@ -332,7 +346,6 @@ function clickProcessor() {
   p.buffer = 0;
   p.progress = 0;
   state.money += total;
-  pushEarning(total);
   spawnMoney(total);
   pulseClick($('processor'));
 }
@@ -360,6 +373,7 @@ function spawnPow(targetEl, text) {
 let _moneyAccum = 0;
 let _moneyLastFxAt = 0;
 function spawnMoney(amount) {
+  if (_offlineCatchup) return;
   _moneyAccum += amount;
   const now = performance.now();
   if (now - _moneyLastFxAt < 250) return;
@@ -380,6 +394,7 @@ function spawnMoney(amount) {
 }
 
 function spawnOreTransfer(fromEl, toEl, amount) {
+  if (_offlineCatchup) return;
   if (!fromEl || !toEl) return;
   const fx = $('fx');
   // cap concurrent fx particles to avoid DOM explosion at high throughput
@@ -416,6 +431,7 @@ function spawnOreTransfer(fromEl, toEl, amount) {
 }
 
 function spawnPuff(target, where) {
+  if (_offlineCatchup) return;
   const fx = $('fx');
   const el = document.createElement('div');
   el.className = 'fx-puff';
@@ -835,8 +851,7 @@ function saveSoon() {
 function saveNow() {
   state.lastTimestamp = Date.now();
   try {
-    const persist = { ...state, earnedRecent: [] };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(persist));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
   } catch (e) { /* quota */ }
 }
 function load() {
@@ -844,13 +859,13 @@ function load() {
   if (!raw) return false;
   try {
     const data = JSON.parse(raw);
+    delete data.earnedRecent; // legacy field — drop it
     state = Object.assign(freshState(), data);
     while (state.shafts.length < SHAFT_DEFS.length) {
       state.shafts.push({ unlocked: false, mineLevel: 1, capLevel: 1, minerLevel: 1, autoMine: false, ore: 0, progress: 0 });
     }
     if (!state.barriers) state.barriers = BARRIER_DEFS.map(() => ({ cleared: false }));
     while (state.barriers.length < BARRIER_DEFS.length) state.barriers.push({ cleared: false });
-    state.earnedRecent = [];
     return true;
   } catch (e) { return false; }
 }
@@ -860,15 +875,17 @@ function applyOfflineProgress() {
   const elapsedSec = Math.min(elapsedMs / 1000, OFFLINE_CAP_SEC);
   if (elapsedSec < 5) return 0;
   const moneyBefore = state.money;
-  const step = 0.1;
+  // Larger step for offline so long absences (4h cap) don't freeze the page;
+  // worker/elevator state machines tolerate dt up to a few seconds fine.
+  const step = 0.5;
   let remaining = elapsedSec;
-  // suppress fx during offline catchup
-  const realSpawn = window._spawnMoney;
+  _offlineCatchup = true;
   while (remaining > 0) {
     tick(Math.min(step, remaining));
     remaining -= step;
   }
-  state.earnedRecent = [];
+  _offlineCatchup = false;
+  resetRateBuffer();
   return state.money - moneyBefore;
 }
 
@@ -878,6 +895,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
   tick(dt);
+  sampleRate(now);
   render();
   requestAnimationFrame(frame);
 }
