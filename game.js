@@ -192,10 +192,10 @@ function buffByType(typeId) { return BUFF_TYPES.find(b => b.id === typeId); }
 function shaftMineTime(z, k) {
   const lvl = state.zones[z].shafts[k].mineLevel;
   const base = SHAFT_DEFS[gIdx(z, k)].baseTime;
-  let t;
-  if (lvl <= 25) t = base / Math.pow(1.10, lvl - 1);
-  else t = base / Math.pow(1.10, 24) / Math.pow(1.04, lvl - 25);
-  return t / buffMul('speed');
+  // No late-game cap — mineLevel cost grows 1.15x/level so per-level ROI
+  // diminishes naturally (1.10x effect / 1.15x cost = 0.957 per level).
+  // Previously the 1.04 cap past lvl 25 flatlined cycle time around lvl 100.
+  return (base / Math.pow(1.10, lvl - 1)) / buffMul('speed');
 }
 function shaftOreCap(z, k) {
   return Math.floor(SHAFT_DEFS[gIdx(z, k)].baseCap * Math.pow(1.25, state.zones[z].shafts[k].capLevel - 1));
@@ -274,6 +274,12 @@ function fmtTime(s) {
 function fmtCycleRate(t) {
   if (t >= 1) return t.toFixed(t < 10 ? 1 : 0) + 's / ore';
   return fmt(1 / t) + ' ore/s';
+}
+// Same thing for shafts but labelled per cycle rather than per ore — yield
+// per cycle is set by miner count, not by mine-speed level.
+function fmtMineRate(t) {
+  if (t >= 1) return t.toFixed(t < 10 ? 1 : 0) + 's / cycle';
+  return fmt(1 / t) + ' cyc/s';
 }
 
 // ---------- SIM TICK ----------
@@ -944,7 +950,7 @@ function getUpgradeDefs() {
     defs.push({
       id: `s${k}_mine`, name: 'Mining Speed', mul: 1.15,
       get: () => zone.shafts[localK].mineLevel,
-      eff: () => fmtTime(shaftMineTime(z, localK)) + ' / cycle',
+      eff: () => fmtMineRate(shaftMineTime(z, localK)),
       cost: () => COSTS.shaftMine(z, localK),
       buy:  () => zone.shafts[localK].mineLevel++,
     });
