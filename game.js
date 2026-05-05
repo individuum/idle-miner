@@ -1060,19 +1060,21 @@ function bulkCostPreview(def, n) {
   return c * (Math.pow(def.mul, n) - 1) / (def.mul - 1);
 }
 
-// Buy up to `max` levels — stops early if money runs out, so a "+10" tap on
-// a half-affordable upgrade still buys what it can.
+// Atomic bulk-buy: only spends if the player can afford all N levels of
+// the geometric-sum total. Otherwise the click does nothing — matches the
+// "+5 / +10" label semantics rather than partial-buy. The per-level loop
+// is still per-iteration so def.cost() ramps with the live state.
 function buyUpgradeBulk(def, max) {
   if (def.oneShot) return;
-  let bought = 0;
+  const totalCost = bulkCostPreview(def, max);
+  if (totalCost == null) return;
+  if (state.money < totalCost) return; // can't afford all N — refuse cleanly
   for (let i = 0; i < max; i++) {
     const c = def.cost();
-    if (state.money < c) break;
     state.money -= c;
     def.buy();
-    bought++;
   }
-  if (bought > 0) saveSoon();
+  saveSoon();
 }
 
 // ---------- CHARACTER SVGs ----------
