@@ -192,10 +192,15 @@ function buffByType(typeId) { return BUFF_TYPES.find(b => b.id === typeId); }
 function shaftMineTime(z, k) {
   const lvl = state.zones[z].shafts[k].mineLevel;
   const base = SHAFT_DEFS[gIdx(z, k)].baseTime;
-  // No late-game cap — mineLevel cost grows 1.15x/level so per-level ROI
-  // diminishes naturally (1.10x effect / 1.15x cost = 0.957 per level).
-  // Previously the 1.04 cap past lvl 25 flatlined cycle time around lvl 100.
-  return (base / Math.pow(1.10, lvl - 1)) / buffMul('speed');
+  // Tiered soft cap so cycle time keeps scaling but doesn't outpace the
+  // elevator: the previous uncapped curve had shaft 0 refilling its cap
+  // faster than the elevator's round trip, so the lift never made it past
+  // the first mine.
+  let t;
+  if (lvl <= 25)      t = base / Math.pow(1.10, lvl - 1);
+  else if (lvl <= 60) t = base / Math.pow(1.10, 24) / Math.pow(1.07, lvl - 25);
+  else                t = base / Math.pow(1.10, 24) / Math.pow(1.07, 35) / Math.pow(1.04, lvl - 60);
+  return t / buffMul('speed');
 }
 function shaftOreCap(z, k) {
   return Math.floor(SHAFT_DEFS[gIdx(z, k)].baseCap * Math.pow(1.25, state.zones[z].shafts[k].capLevel - 1));
@@ -453,12 +458,25 @@ function tickZone(z, dt) {
   if (p.buffer <= 0) p.progress = 0;
 }
 
+// Pick the shaft most worth visiting: highest fill ratio (ore/cap), with
+// raw-ore as tiebreak (deeper shafts have bigger caps, so a deeper full
+// shaft yields more cargo per trip than a shallow full one). This rotates
+// the elevator across the zone instead of dwelling on whichever shaft
+// happens to have the most absolute ore — usually the fast-mining shaft 0.
 function bestShaftWithOre(z) {
-  let best = -1, bestOre = 0;
   const shafts = state.zones[z].shafts;
+  let best = -1, bestRatio = -1, bestOre = 0;
   for (let k = 0; k < shafts.length; k++) {
     const s = shafts[k];
-    if (s.unlocked && s.ore > bestOre) { best = k; bestOre = s.ore; }
+    if (!s.unlocked || s.ore <= 0) continue;
+    const cap = shaftOreCap(z, k);
+    const ratio = s.ore / cap;
+    if (ratio > bestRatio + 1e-9 ||
+       (Math.abs(ratio - bestRatio) < 1e-9 && s.ore > bestOre)) {
+      best = k;
+      bestRatio = ratio;
+      bestOre = s.ore;
+    }
   }
   return best;
 }
