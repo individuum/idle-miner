@@ -222,14 +222,15 @@ function processorTime(z) {
 }
 function processorValue(z) {
   const lvl = state.zones[z].processor.valueLevel;
-  // Tightened late-game scaling so ore value doesn't dominate income:
+  // Late-game scaling — bumped 31+ from 1.05 to 1.07 so progress around the
+  // 100T money mark doesn't stall:
   // 1-15  : 1.35x per level
   // 16-30 : 1.10x per level (mild post-cap)
-  // 31+   : 1.05x per level (hard post-cap)
+  // 31+   : 1.07x per level (hard post-cap)
   let v;
   if (lvl <= 15) v = 2 * Math.pow(1.35, lvl - 1);
   else if (lvl <= 30) v = 2 * Math.pow(1.35, 14) * Math.pow(1.10, lvl - 15);
-  else v = 2 * Math.pow(1.35, 14) * Math.pow(1.10, 15) * Math.pow(1.05, lvl - 30);
+  else v = 2 * Math.pow(1.35, 14) * Math.pow(1.10, 15) * Math.pow(1.07, lvl - 30);
   return v * buffMul('value');
 }
 function processorParallel(z) { return state.zones[z].processor.parallelLevel; }
@@ -311,12 +312,23 @@ function tickBuffs() {
 }
 
 let _activeArtifact = null;
+// Spawn cadence shrinks with progression. Highest unlocked zone is the
+// proxy: zone 0 keeps the 30-90s window; zone 5 drops to ~9-27s. Clamped
+// to avoid drowning the screen in pickups.
+function artifactInterval() {
+  let highest = 0;
+  for (let z = 0; z < state.zonesUnlocked.length; z++) {
+    if (state.zonesUnlocked[z]) highest = z;
+  }
+  const factor = Math.max(0.3, 1 - highest * 0.15);
+  return (30000 + Math.random() * 60000) * factor;
+}
 function tickArtifacts() {
   const now = Date.now();
   if (_activeArtifact && now > _activeArtifact.despawnAt) removeArtifact();
   if (state.nextArtifactAt && now >= state.nextArtifactAt && !_activeArtifact) {
     spawnArtifact();
-    state.nextArtifactAt = now + 30000 + Math.random() * 60000; // 30-90s
+    state.nextArtifactAt = now + artifactInterval();
   }
 }
 
